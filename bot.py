@@ -1,11 +1,11 @@
 import os
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from db import *
 import datetime
 
-load_dotenv()
+# load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 admin_ids = [1070282751]
