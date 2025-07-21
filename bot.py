@@ -1,3 +1,19 @@
+# Додати НАЙПЕРШИЙ блок у bot.py:
+import threading
+from flask import Flask
+
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def index():
+    return "Бот працює!"
+
+def run_flask():
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    flask_app.run(host="0.0.0.0", port=port)
+
+
 import os
 # from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
@@ -242,4 +258,5 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__":
+    threading.Thread(target=run_flask).start()
     main()
