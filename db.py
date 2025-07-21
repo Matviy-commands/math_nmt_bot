@@ -28,6 +28,14 @@ def init_db():
                 explanation TEXT
             )
         """)
+        # --- Додаємо таблицю виконаних задач ---
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS completed_tasks (
+                user_id INTEGER,
+                task_id INTEGER,
+                PRIMARY KEY (user_id, task_id)
+            )
+        """)
 
 def get_user(user_id):
     with connect() as con:
@@ -64,7 +72,8 @@ def get_level_by_score(score):
     else:
         return "Математичний гуру"
 
-def get_random_task(topic=None, level=None):
+# --- Головне: Повертає тільки невиконані задачі ---
+def get_random_task(topic=None, level=None, user_id=None):
     with connect() as con:
         cur = con.cursor()
         query = "SELECT * FROM tasks WHERE 1=1"
@@ -75,6 +84,9 @@ def get_random_task(topic=None, level=None):
         if level:
             query += " AND level = ?"
             params.append(level)
+        if user_id:
+            query += " AND id NOT IN (SELECT task_id FROM completed_tasks WHERE user_id = ?)"
+            params.append(user_id)
         query += " ORDER BY RANDOM() LIMIT 1"
         cur.execute(query, tuple(params))
         row = cur.fetchone()
@@ -89,6 +101,13 @@ def get_random_task(topic=None, level=None):
             }
     return None
 
+def mark_task_completed(user_id, task_id):
+    with connect() as con:
+        con.execute(
+            "INSERT OR IGNORE INTO completed_tasks (user_id, task_id) VALUES (?, ?)",
+            (user_id, task_id)
+        )
+
 def add_task(data):
     with connect() as con:
         con.execute("""
@@ -101,3 +120,30 @@ def add_task(data):
             json.dumps(data["answer"]),
             data["explanation"]
         ))
+
+def get_all_tasks_by_topic(topic):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT * FROM tasks WHERE topic = ?", (topic,))
+        rows = cur.fetchall()
+        tasks = []
+        for row in rows:
+            tasks.append({
+                "id": row[0],
+                "topic": row[1],
+                "level": row[2],
+                "question": row[3],
+                "answer": json.loads(row[4]),
+                "explanation": row[5]
+            })
+        return tasks
+
+# Якщо потрібно — можна додати ще метод, який повертає всі task_id для юзера по темі/рівню
+def all_tasks_completed(user_id, topic, level):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT id FROM tasks WHERE topic=? AND level=?", (topic, level))
+        all_ids = set(row[0] for row in cur.fetchall())
+        cur.execute("SELECT task_id FROM completed_tasks WHERE user_id=? AND task_id IN (SELECT id FROM tasks WHERE topic=? AND level=?)", (user_id, topic, level))
+        done_ids = set(row[0] for row in cur.fetchall())
+        return all_ids == done_ids and len(all_ids) > 0
