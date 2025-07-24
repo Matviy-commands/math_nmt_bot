@@ -36,6 +36,15 @@ def init_db():
                 PRIMARY KEY (user_id, task_id)
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                message TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
 def get_user(user_id):
     with connect() as con:
@@ -147,3 +156,58 @@ def all_tasks_completed(user_id, topic, level):
         cur.execute("SELECT task_id FROM completed_tasks WHERE user_id=? AND task_id IN (SELECT id FROM tasks WHERE topic=? AND level=?)", (user_id, topic, level))
         done_ids = set(row[0] for row in cur.fetchall())
         return all_ids == done_ids and len(all_ids) > 0
+
+def get_task_by_id(task_id):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        row = cur.fetchone()
+        if row:
+            return {
+                "id": row[0],
+                "topic": row[1],
+                "level": row[2],
+                "question": row[3],
+                "answer": json.loads(row[4]),
+                "explanation": row[5]
+            }
+    return None
+
+def delete_task(task_id):
+    with connect() as con:
+        con.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+
+def update_task_field(task_id, field, value):
+    with connect() as con:
+        con.execute(f"UPDATE tasks SET {field} = ? WHERE id = ?", (value, task_id))
+        
+def get_all_topics():
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT DISTINCT topic FROM tasks")
+        topics = [row[0] for row in cur.fetchall()]
+        forbidden = {"🧠 Почати задачу", "Рандомна тема", "❌ Немає тем"}
+        clean_topics = [t for t in topics if t not in forbidden and len(t) > 1]
+        return clean_topics
+
+def add_feedback(user_id, username, message):
+    with connect() as con:
+        con.execute(
+            "INSERT INTO feedback (user_id, username, message) VALUES (?, ?, ?)",
+            (user_id, username, message)
+        )
+
+def get_all_feedback():
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT id, user_id, username, message, timestamp FROM feedback ORDER BY timestamp DESC")
+        return cur.fetchall()
+
+def get_user_completed_count(user_id, topic, level):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM completed_tasks WHERE user_id = ? AND task_id IN (SELECT id FROM tasks WHERE topic=? AND level=?)",
+            (user_id, topic, level)
+        )
+        return cur.fetchone()[0]
