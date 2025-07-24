@@ -1,7 +1,7 @@
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from handlers.progress import show_progress
+from handlers.progress import show_progress, show_rating
 from handlers.daily import handle_daily_task
-from handlers.state import user_states, feedback_state
+from handlers.state import user_states, feedback_state, user_last_menu
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from handlers.badges import show_badges
@@ -97,11 +97,18 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if task:
                 update_user(user_id, "level", text)
                 user_states[user_id] = task
-                await update.message.reply_text(
-                    f"📘 {task['topic']} ({task['level']})\n\n{task['question']}",
-                    reply_markup=build_task_keyboard()
-                )
+                task_text = f"📘 {task['topic']} ({task['level']})\n\n{task['question']}"
+                # Якщо є фото до задачі
+                if task.get("photo"):
+                    await update.message.reply_photo(
+                        task["photo"], caption=task_text, reply_markup=build_task_keyboard()
+                    )
+                else:
+                    await update.message.reply_text(
+                        task_text, reply_markup=build_task_keyboard()
+                    )
                 del start_task_state[user_id]
+
             else:
                 await update.message.reply_text(
                     "🎉 Вітаю! Ти пройшов всі задачі цієї теми та рівня!",
@@ -149,6 +156,18 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     text = update.message.text
     username = update.effective_user.username or ""
 
+    if text == "↩️ Назад":
+        last_menu = user_last_menu.get(user_id)
+        if last_menu in ("badges", "rating"):
+            await show_progress(update, context)
+            user_last_menu[user_id] = "progress"  # повертаємось до прогресу
+        else:
+            await update.message.reply_text(
+                "📍 Головне меню:",
+                reply_markup=build_main_menu(user_id)
+            )
+        return
+
     if text == "📊 Мій прогрес":
         await show_progress(update, context)
         return
@@ -156,6 +175,11 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if text == "🛒 Бонуси / Бейджі":
         await show_badges(update, context)
         return
+    
+    if text == "🏆 Рейтинг":
+        await show_rating(update, context)
+        return
+
 
     if text == "↩️ Назад":
         await update.message.reply_text(

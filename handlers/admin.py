@@ -5,10 +5,11 @@ from handlers.utils import (
     build_tasks_pagination_keyboard,
     build_topics_keyboard,
     build_tasks_pagination_inline_keyboard,
-    build_feedback_pagination_inline_keyboard
+    build_feedback_pagination_inline_keyboard,
+    skip_cancel_keyboard
 )
 from db import *
-from telegram import Update, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ContextTypes
 from handlers.state import feedback_state
 
@@ -18,7 +19,7 @@ edit_task_state = {}
 delete_task_state = {}
 
 LEVELS = ["легкий", "середній", "важкий"]
-admin_ids = [1070282751]
+admin_ids = [1070282751, 981761965]
 TASKS_PER_PAGE = 5
 FEEDBACKS_PER_PAGE = 5
 
@@ -216,6 +217,7 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         return False
     state = add_task_state[user_id]
     data = state.get("data", {})
+
     if text == "❌ Скасувати":
         del add_task_state[user_id]
         if user_id in admin_menu_state:
@@ -223,12 +225,14 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         else:
             await update.message.reply_text("Додавання задачі скасовано.", reply_markup=build_main_menu(user_id))
         return True
+
     if state["step"] == "topic":
         data["topic"] = text
         state["step"] = "level"
         state["data"] = data
         await update.message.reply_text("🟡 Введи рівень задачі (легкий/середній/важкий):", reply_markup=build_cancel_keyboard())
         return True
+
     elif state["step"] == "level":
         if text not in LEVELS:
             await update.message.reply_text("❌ Невірний рівень. Введи: легкий / середній / важкий", reply_markup=build_cancel_keyboard())
@@ -238,25 +242,54 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         state["data"] = data
         await update.message.reply_text("🟢 Введи текст задачі:", reply_markup=build_cancel_keyboard())
         return True
+
     elif state["step"] == "question":
         data["question"] = text
+        state["step"] = "photo"
+        state["data"] = data
+        await update.message.reply_text(
+            "🔗 Надішліть фото до умови задачі або натисніть 'Пропустити', якщо фото не потрібно.",
+            reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Пропустити")], [KeyboardButton("❌ Скасувати")]], resize_keyboard=True)
+        )
+        return True
+
+    elif state["step"] == "photo":
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+            data["photo"] = file_id
+        elif text == "Пропустити":
+            data["photo"] = None
+        else:
+            await update.message.reply_text(
+                "Надішли фото або натисни 'Пропустити'! 😎",
+                reply_markup=ReplyKeyboardMarkup(
+                    [[KeyboardButton("Пропустити")], [KeyboardButton("❌ Скасувати")]],
+                    resize_keyboard=True
+                )
+            )
+            return True
         state["step"] = "answer"
         state["data"] = data
         await update.message.reply_text("🔷 Введи правильні відповіді через кому (наприклад: 2, -2):", reply_markup=build_cancel_keyboard())
         return True
+
     elif state["step"] == "answer":
         data["answer"] = [a.strip() for a in text.split(",")]
         state["step"] = "explanation"
         state["data"] = data
         await update.message.reply_text("📘 Введи пояснення до задачі:", reply_markup=build_cancel_keyboard())
         return True
+
     elif state["step"] == "explanation":
         data["explanation"] = text
         add_task(data)
         await update.message.reply_text("✅ Задачу додано успішно!", reply_markup=build_admin_menu() if user_id in admin_menu_state else build_main_menu(user_id))
+        await update.message.reply_text("Гуд гьорл! 😎")
         del add_task_state[user_id]
         return True
+
     return False
+
 
 async def handle_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, text):
     if user_id not in delete_task_state:
@@ -286,10 +319,12 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
     if user_id not in edit_task_state:
         return False
     state = edit_task_state[user_id]
+
     if text == "❌ Скасувати":
         del edit_task_state[user_id]
         await update.message.reply_text("Редагування скасовано.", reply_markup=build_admin_menu())
         return True
+
     if state["step"] == "ask_id":
         try:
             task_id = int(text)
@@ -298,61 +333,115 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
                 await update.message.reply_text("Задача з таким ID не знайдена. Введіть ще раз або ❌ Скасувати.")
                 return True
             state["task_id"] = task_id
-            state["step"] = "edit_question"
+            state["step"] = "edit_topic"
+            # --- Вибір теми
+            topics = get_all_topics()
             await update.message.reply_text(
-                f"Поточне питання: {task['question']}\nВведіть новий текст задачі або залиште порожнім:",
-                reply_markup=build_cancel_keyboard()
+                f"Поточна тема: {task['topic']}\nВиберіть нову тему або натисніть 'Пропустити':",
+                reply_markup=ReplyKeyboardMarkup(
+                    [[KeyboardButton(t)] for t in topics] + [[KeyboardButton("Пропустити")], [KeyboardButton("❌ Скасувати")]],
+                    resize_keyboard=True
+                )
             )
             return True
         except Exception:
             await update.message.reply_text("ID має бути цілим числом. Введіть ще раз або ❌ Скасувати.")
             return True
+
+    elif state["step"] == "edit_topic":
+        task_id = state["task_id"]
+        topics = get_all_topics()
+        if text != "Пропустити" and text in topics:
+            update_task_field(task_id, "topic", text)
+        elif text != "Пропустити" and text not in topics:
+            await update.message.reply_text(
+                "Такої теми не існує. Оберіть із списку або натисніть 'Пропустити'.",
+                reply_markup=ReplyKeyboardMarkup(
+                    [[KeyboardButton(t)] for t in topics] + [[KeyboardButton("Пропустити")], [KeyboardButton("❌ Скасувати")]],
+                    resize_keyboard=True
+                )
+            )
+            return True
+        
+        state["step"] = "edit_question"
+        task = get_task_by_id(task_id)
+        await update.message.reply_text(
+            f"Поточне питання: {task['question']}\nВведіть новий текст задачі або натисніть 'Пропустити':",
+            reply_markup=skip_cancel_keyboard()
+        )
+        return True
+        
     elif state["step"] == "edit_question":
         task_id = state["task_id"]
-        task = get_task_by_id(task_id)
-        if text.strip():
+        # Якщо НЕ Пропустити і є текст — оновлюємо, інакше пропускаємо
+        if text != "Пропустити" and text.strip():
             update_task_field(task_id, "question", text.strip())
         state["step"] = "edit_level"
+        task = get_task_by_id(task_id)
         await update.message.reply_text(
-            f"Поточний рівень: {task['level']}\nВведіть новий рівень (легкий/середній/важкий) або залиште порожнім:",
-            reply_markup=build_cancel_keyboard()
+            f"Поточний рівень: {task['level']}\nВведіть новий рівень (легкий/середній/важкий) або натисніть 'Пропустити':",
+            reply_markup=skip_cancel_keyboard()
         )
         return True
+
     elif state["step"] == "edit_level":
         task_id = state["task_id"]
-        task = get_task_by_id(task_id)
         level = text.strip()
-        if level and level not in LEVELS:
-            await update.message.reply_text("❌ Невірний рівень. Можливі: легкий / середній / важкий. Спробуйте ще раз або ❌ Скасувати.")
+        if level and level not in LEVELS and level != "Пропустити":
+            await update.message.reply_text("❌ Невірний рівень. Можливі: легкий / середній / важкий / Пропустити.")
             return True
-        if level:
+        if level and level != "Пропустити":
             update_task_field(task_id, "level", level)
         state["step"] = "edit_answer"
+        task = get_task_by_id(task_id)
         ans_str = ', '.join(task['answer'])
         await update.message.reply_text(
-            f"Поточна відповідь: {ans_str}\nВведіть нову відповідь через кому або залиште порожнім:",
-            reply_markup=build_cancel_keyboard()
+            f"Поточна відповідь: {ans_str}\nВведіть нову відповідь через кому або натисніть 'Пропустити':",
+            reply_markup=skip_cancel_keyboard()
         )
         return True
+
     elif state["step"] == "edit_answer":
         task_id = state["task_id"]
-        task = get_task_by_id(task_id)
-        if text.strip():
+        if text != "Пропустити" and text.strip():
             ans_list = [a.strip() for a in text.split(",")]
             update_task_field(task_id, "answer", json.dumps(ans_list))
         state["step"] = "edit_explanation"
+        task = get_task_by_id(task_id)
         await update.message.reply_text(
-            f"Поточне пояснення: {task['explanation']}\nВведіть нове пояснення або залиште порожнім:",
-            reply_markup=build_cancel_keyboard()
+            f"Поточне пояснення: {task['explanation']}\nВведіть нове пояснення або натисніть 'Пропустити':",
+            reply_markup=skip_cancel_keyboard()
         )
         return True
+
     elif state["step"] == "edit_explanation":
         task_id = state["task_id"]
-        if text.strip():
+        if text != "Пропустити" and text.strip():
             update_task_field(task_id, "explanation", text.strip())
-        await update.message.reply_text("✅ Задачу оновлено.", reply_markup=build_admin_menu())
-        del edit_task_state[user_id]
+        # Додаємо крок редагування фото
+        state["step"] = "edit_photo"
+        await update.message.reply_text(
+            "Надішліть нове фото до задачі, якщо потрібно змінити. Або натисніть 'Пропустити', щоб залишити старе.",
+            reply_markup=skip_cancel_keyboard()
+        )
         return True
+
+    elif state["step"] == "edit_photo":
+        if text == "Пропустити":
+            await update.message.reply_text("✅ Задачу оновлено.", reply_markup=build_admin_menu())
+            del edit_task_state[user_id]
+            admin_menu_state[user_id] = True
+            return True
+        # Фото обробляється окремо у handle_edit_task_photo
+        if update.message.photo:
+            return False
+        else:
+            await update.message.reply_text(
+                "Надішліть саме фото, або натисніть 'Пропустити'.",
+                reply_markup=skip_cancel_keyboard()
+            )
+            return True
+
     return False
 
 async def handle_task_pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -422,3 +511,37 @@ async def handle_feedback_pagination_callback(update: Update, context: ContextTy
         reply_markup=build_feedback_pagination_inline_keyboard(page, has_prev, has_next)
     )
     await query.answer()
+
+async def handle_add_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in add_task_state:
+        state = add_task_state[user_id]
+        if state.get("step") == "photo":
+            data = state.get("data", {})
+            file_id = update.message.photo[-1].file_id
+            data["photo"] = file_id
+            state["data"] = data
+            state["step"] = "answer"
+            await update.message.reply_text(
+                "🔷 Введи правильні відповіді через кому (наприклад: 2, -2):",
+                reply_markup=build_cancel_keyboard()
+            )
+            return True
+    return False
+
+async def handle_edit_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in edit_task_state:
+        state = edit_task_state[user_id]
+        if state.get("step") == "edit_photo":
+            task_id = state["task_id"]
+            file_id = update.message.photo[-1].file_id
+            update_task_field(task_id, "photo", file_id)
+            await update.message.reply_text(
+                "✅ Фото задачі оновлено.",
+                reply_markup=build_admin_menu()
+            )
+            del edit_task_state[user_id]
+            admin_menu_state[user_id] = True  # <-- Повертає до адмін-меню (корінь)
+            return True
+    return False

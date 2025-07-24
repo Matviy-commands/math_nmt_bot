@@ -75,3 +75,8 @@ def build_feedback_pagination_inline_keyboard(page, has_prev, has_next):
         ])
     return InlineKeyboardMarkup(buttons)
 
+def skip_cancel_keyboard():
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("Пропустити")], [KeyboardButton("❌ Скасувати")]],
+        resize_keyboard=True
+    )

@@ -15,9 +15,23 @@ def init_db():
                 score INTEGER DEFAULT 0,
                 topic TEXT,
                 level TEXT,
-                last_daily TEXT
+                last_daily TEXT,
+                topics_completed INTEGER DEFAULT 0,
+                topics_total INTEGER DEFAULT 0,
+                daily_streak INTEGER DEFAULT 0,
+                feedbacks INTEGER DEFAULT 0,
+                all_tasks_completed INTEGER DEFAULT 0
             )
         """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS badges (
+                user_id INTEGER,
+                badge TEXT,
+                PRIMARY KEY (user_id, badge)
+            )
+        """)
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,7 +39,8 @@ def init_db():
                 level TEXT NOT NULL,
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
-                explanation TEXT
+                explanation TEXT,
+                photo TEXT
             )
         """)
         # --- Додаємо таблицю виконаних задач ---
@@ -45,6 +60,7 @@ def init_db():
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
 
 def get_user(user_id):
     with connect() as con:
@@ -106,7 +122,8 @@ def get_random_task(topic=None, level=None, user_id=None):
                 "level": row[2],
                 "question": row[3],
                 "answer": json.loads(row[4]),
-                "explanation": row[5]
+                "explanation": row[5],
+                "photo": row[6]
             }
     return None
 
@@ -120,15 +137,17 @@ def mark_task_completed(user_id, task_id):
 def add_task(data):
     with connect() as con:
         con.execute("""
-            INSERT INTO tasks (topic, level, question, answer, explanation)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO tasks (topic, level, question, answer, explanation, photo)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
             data["topic"],
             data["level"],
             data["question"],
             json.dumps(data["answer"]),
-            data["explanation"]
+            data["explanation"],
+            data.get("photo")
         ))
+
 
 def get_all_tasks_by_topic(topic):
     with connect() as con:
@@ -143,7 +162,8 @@ def get_all_tasks_by_topic(topic):
                 "level": row[2],
                 "question": row[3],
                 "answer": json.loads(row[4]),
-                "explanation": row[5]
+                "explanation": row[5],
+                "photo": row[6],  
             })
         return tasks
 
@@ -169,7 +189,8 @@ def get_task_by_id(task_id):
                 "level": row[2],
                 "question": row[3],
                 "answer": json.loads(row[4]),
-                "explanation": row[5]
+                "explanation": row[5],
+                "photo": row[6], 
             }
     return None
 
@@ -211,3 +232,54 @@ def get_user_completed_count(user_id, topic, level):
             (user_id, topic, level)
         )
         return cur.fetchone()[0]
+
+def get_top_users(limit=10):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT id, score FROM users ORDER BY score DESC LIMIT ?", (limit,))
+        return cur.fetchall()
+
+def get_user_rank(user_id):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT id, score FROM users ORDER BY score DESC")
+        rows = cur.fetchall()
+        for rank, (uid, score) in enumerate(rows, start=1):
+            if uid == user_id:
+                return rank, score, len(rows)
+        return None, None, len(rows)
+
+def unlock_badge(user_id, badge, reward=0):
+    with connect() as con:
+        cur = con.cursor()
+        # Якщо ще нема такого бейджа для юзера
+        cur.execute("SELECT 1 FROM badges WHERE user_id=? AND badge=?", (user_id, badge))
+        if not cur.fetchone():
+            cur.execute("INSERT INTO badges (user_id, badge) VALUES (?, ?)", (user_id, badge))
+            if reward:
+                con.execute("UPDATE users SET score = score + ? WHERE id = ?", (reward, user_id))
+            return True
+    return False
+
+def get_user_badges(user_id):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT badge FROM badges WHERE user_id = ?", (user_id,))
+        return [row[0] for row in cur.fetchall()]
+
+def count_user_tasks(user_id):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT COUNT(*) FROM completed_tasks WHERE user_id = ?", (user_id,))
+        return cur.fetchone()[0]
+    
+def add_feedback(user_id, username, message):
+    with connect() as con:
+        con.execute(
+            "INSERT INTO feedback (user_id, username, message) VALUES (?, ?, ?)",
+            (user_id, username, message)
+        )
+        # Додаємо лічильник фідбеків
+        con.execute(
+            "UPDATE users SET feedbacks = feedbacks + 1 WHERE id = ?", (user_id,)
+        )
