@@ -216,6 +216,14 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if text == "Змінити тему":
         await task_entrypoint(update, context)
         return
+    
+    if text == "↩️ Меню":
+        solving_state.pop(user_id, None)  # На всякий випадок очищуємо стан
+        await update.message.reply_text(
+            "📍 Головне меню:",
+            reply_markup=build_main_menu(user_id)
+        )
+        return
 
 
     if text == "↩️ Назад":
