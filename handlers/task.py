@@ -252,10 +252,12 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         del change_name_state[user_id]
         await update.message.reply_text(
             f"✅ Ваше імʼя в рейтингу оновлено: <b>{new_name}</b>",
-            parse_mode="HTML",
-            reply_markup=build_main_menu(user_id)
+            parse_mode="HTML"
         )
+        # Одразу показуємо рейтинг
+        await show_rating(update, context)
         return
+
 
 
     if text in LEVELS and user_id not in start_task_state:
