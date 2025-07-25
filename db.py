@@ -20,7 +20,9 @@ def init_db():
                 topics_total INTEGER DEFAULT 0,
                 daily_streak INTEGER DEFAULT 0,
                 feedbacks INTEGER DEFAULT 0,
-                all_tasks_completed INTEGER DEFAULT 0
+                all_tasks_completed INTEGER DEFAULT 0,
+                display_name TEXT,
+                username TEXT
             )
         """)
 

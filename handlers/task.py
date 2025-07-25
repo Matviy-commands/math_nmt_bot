@@ -1,7 +1,7 @@
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from handlers.progress import show_progress, show_rating
 from handlers.daily import handle_daily_task
-from handlers.state import feedback_state, user_last_menu, solving_state
+from handlers.state import feedback_state, user_last_menu, solving_state, change_name_state
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from handlers.badges import show_badges
@@ -225,6 +225,38 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     text = update.message.text
     username = update.effective_user.username or ""
+    if username:
+        update_user(user_id, "username", username)
+
+    if text == "✏️ Змінити імʼя в рейтингу":
+        change_name_state[user_id] = True
+        await update.message.reply_text(
+            "Введіть нове імʼя (2-20 символів):",
+            reply_markup=ReplyKeyboardMarkup([[KeyboardButton("❌ Скасувати")]], resize_keyboard=True)
+        )
+        return
+
+    if change_name_state.get(user_id):
+        if text == "❌ Скасувати":
+            del change_name_state[user_id]
+            await update.message.reply_text(
+                "Скасовано. Ви у головному меню.",
+                reply_markup=build_main_menu(user_id)
+            )
+            return
+        new_name = text.strip()
+        if not (2 <= len(new_name) <= 20):
+            await update.message.reply_text("Імʼя повинно бути від 2 до 20 символів. Спробуйте ще раз:")
+            return
+        update_user(user_id, "display_name", new_name)
+        del change_name_state[user_id]
+        await update.message.reply_text(
+            f"✅ Ваше імʼя в рейтингу оновлено: <b>{new_name}</b>",
+            parse_mode="HTML",
+            reply_markup=build_main_menu(user_id)
+        )
+        return
+
 
     if text in LEVELS and user_id not in start_task_state:
         # Хоче пройти інший рівень — запускаємо збереження стану та handle_task_step
