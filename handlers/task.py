@@ -84,16 +84,26 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # 2. Вибір рівня і запуск циклу задач
         elif state["step"] == "level" and text in LEVELS:
             topic = get_user_field(user_id, "topic")
-            # ---- отримуємо задачі цього рівня, які ще не виконані
+            # --- отримуємо всі задачі цієї теми
             all_tasks = get_all_tasks_by_topic(topic)
-            completed = set([
-                t["id"] for t in all_tasks
+            # --- фільтруємо задачі саме цього рівня
+            level_tasks = [t for t in all_tasks if t["level"] == text]
+            if not level_tasks:
+                await update.message.reply_text(
+                    f"❌ Для рівня «{text}» задач немає!",
+                    reply_markup=build_main_menu(user_id)
+                )
+                del start_task_state[user_id]
+                return
+
+            # --- визначаємо невиконані задачі
+            completed_ids = set([
+                t["id"] for t in level_tasks
                 if all_tasks_completed(user_id, topic, text)
             ])
-            tasks = [t for t in all_tasks if t["level"] == text and t["id"] not in completed]
+            tasks = [t for t in level_tasks if t["id"] not in completed_ids]
             if not tasks:
                 await update.message.reply_text(
                     "🎉 Вітаю! Ти пройшов всі задачі цієї теми та рівня!",
@@ -147,7 +157,18 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             return
         explanation = task["explanation"].strip() if task["explanation"] else "Пояснення відсутнє!"
-        if text.strip() in task["answer"]:
+
+        # === Нова багатовідповідна перевірка ===
+        user_answers = [a.strip() for a in text.replace(';', ',').split(',') if a.strip()]
+        correct_answers = [a.strip() for a in task["answer"]]
+
+        # Перевіряємо: всі відповіді мають співпадати, порядок НЕ важливий
+        is_correct = (
+            len(user_answers) == len(correct_answers) and
+            set(user_answers) == set(correct_answers)
+        )
+
+        if is_correct:
             add_score(user_id, 10)
             msg = "✅ Правильно! +10 балів 🎉"
         else:
@@ -156,11 +177,9 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(msg)
         mark_task_completed(user_id, task["id"])
         state["current"] += 1
-        # якщо є ще задачі — надсилаємо наступну
         if state["current"] < len(state["task_ids"]):
             await send_next_task(update, context, user_id)
         else:
-            # всі задачі рівня виконані!
             await update.message.reply_text(
                 f"🎉 Вітаю! Ви завершили всі задачі рівня «{state['level']}».\n"
                 "Оберіть інший рівень або змініть тему, або поверніться в меню.",
@@ -173,7 +192,6 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             solving_state.pop(user_id, None)
         return
-
 
 async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
