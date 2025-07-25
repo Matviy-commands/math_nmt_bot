@@ -9,8 +9,7 @@ from handlers.admin import (
     admin_menu_state,
     handle_task_pagination_callback,
     handle_feedback_pagination_callback,
-    handle_add_task_photo,
-    handle_edit_task_photo,
+    handle_admin_photo,
 )
 from handlers.task import main_message_handler
 from db import init_db
@@ -31,8 +30,7 @@ def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_handler))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_edit_task_photo))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_add_task_photo))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_admin_photo))
     app.add_handler(CallbackQueryHandler(handle_feedback_pagination_callback, pattern="^feedback_"))
     app.add_handler(CallbackQueryHandler(handle_task_pagination_callback))
     app.add_handler(CommandHandler("addtask", addtask_handler))

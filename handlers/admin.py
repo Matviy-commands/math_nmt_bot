@@ -120,16 +120,17 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     # --- Крок 1: Перехід на вибір теми для перегляду задач ---
     if text == "📋 Переглянути задачі" and user_id in admin_menu_state:
-        admin_menu_state[user_id] = {"step": "choose_topic"}
         topics = get_all_topics()
         if not topics:
             await update.message.reply_text("У базі ще немає жодної теми.", reply_markup=build_admin_menu())
             return True
+        admin_menu_state[user_id] = {"step": "choose_topic"}
         await update.message.reply_text(
             "Оберіть тему для перегляду задач:",
             reply_markup=build_topics_keyboard(topics + ["↩️ Назад"])
         )
         return True
+
 
     # --- Крок 2: Обрано тему — стартуємо пагінацію ---
     if user_id in admin_menu_state and isinstance(admin_menu_state[user_id], dict):
@@ -337,12 +338,10 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
             # --- Вибір теми
             topics = get_all_topics()
             await update.message.reply_text(
-                f"Поточна тема: {task['topic']}\nВиберіть нову тему або натисніть 'Пропустити':",
-                reply_markup=ReplyKeyboardMarkup(
-                    [[KeyboardButton(t)] for t in topics] + [[KeyboardButton("Пропустити")], [KeyboardButton("❌ Скасувати")]],
-                    resize_keyboard=True
-                )
+                f"Поточна тема: {task['topic']}\nВведіть нову тему або натисніть 'Пропустити':",
+                reply_markup=skip_cancel_keyboard()
             )
+
             return True
         except Exception:
             await update.message.reply_text("ID має бути цілим числом. Введіть ще раз або ❌ Скасувати.")
@@ -350,18 +349,28 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
 
     elif state["step"] == "edit_topic":
         task_id = state["task_id"]
-        topics = get_all_topics()
-        if text != "Пропустити" and text in topics:
-            update_task_field(task_id, "topic", text)
-        elif text != "Пропустити" and text not in topics:
-            await update.message.reply_text(
-                "Такої теми не існує. Оберіть із списку або натисніть 'Пропустити'.",
-                reply_markup=ReplyKeyboardMarkup(
-                    [[KeyboardButton(t)] for t in topics] + [[KeyboardButton("Пропустити")], [KeyboardButton("❌ Скасувати")]],
-                    resize_keyboard=True
+        # Якщо НЕ Пропустити і НЕ Скасувати — оновлюємо тему на будь-який введений текст
+        if text != "Пропустити" and text != "❌ Скасувати":
+            if len(text.strip()) == 0:
+                await update.message.reply_text(
+                    "Тема не може бути порожньою. Введіть нову тему або натисніть 'Пропустити':",
+                    reply_markup=skip_cancel_keyboard()
                 )
-            )
+                return True
+            update_task_field(task_id, "topic", text.strip())
+        elif text == "❌ Скасувати":
+            del edit_task_state[user_id]
+            await update.message.reply_text("Редагування скасовано.", reply_markup=build_admin_menu())
             return True
+
+        state["step"] = "edit_question"
+        task = get_task_by_id(task_id)
+        await update.message.reply_text(
+            f"Поточне питання: {task['question']}\nВведіть новий текст задачі або натисніть 'Пропустити':",
+            reply_markup=skip_cancel_keyboard()
+        )
+        return True
+
         
         state["step"] = "edit_question"
         task = get_task_by_id(task_id)
@@ -545,3 +554,19 @@ async def handle_edit_task_photo(update: Update, context: ContextTypes.DEFAULT_T
             admin_menu_state[user_id] = True  # <-- Повертає до адмін-меню (корінь)
             return True
     return False
+
+async def handle_admin_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    # 1. Додаємо фото до задачі (створення)
+    if user_id in add_task_state and add_task_state[user_id].get("step") == "photo":
+        await handle_add_task_photo(update, context)
+        return
+
+    # 2. Редагування фото
+    if user_id in edit_task_state and edit_task_state[user_id].get("step") == "edit_photo":
+        await handle_edit_task_photo(update, context)
+        return
+
+    # 3. Якщо не в стейті — просто ігноруємо або даємо підказку
+    await update.message.reply_text("Зараз фото не очікується. Спробуйте спочатку вибрати дію в меню.")

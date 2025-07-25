@@ -127,13 +127,6 @@ def get_random_task(topic=None, level=None, user_id=None):
             }
     return None
 
-def mark_task_completed(user_id, task_id):
-    with connect() as con:
-        con.execute(
-            "INSERT OR IGNORE INTO completed_tasks (user_id, task_id) VALUES (?, ?)",
-            (user_id, task_id)
-        )
-
 def add_task(data):
     with connect() as con:
         con.execute("""
@@ -211,13 +204,6 @@ def get_all_topics():
         clean_topics = [t for t in topics if t not in forbidden and len(t) > 1]
         return clean_topics
 
-def add_feedback(user_id, username, message):
-    with connect() as con:
-        con.execute(
-            "INSERT INTO feedback (user_id, username, message) VALUES (?, ?, ?)",
-            (user_id, username, message)
-        )
-
 def get_all_feedback():
     with connect() as con:
         cur = con.cursor()
@@ -283,3 +269,41 @@ def add_feedback(user_id, username, message):
         con.execute(
             "UPDATE users SET feedbacks = feedbacks + 1 WHERE id = ?", (user_id,)
         )
+
+def update_all_tasks_completed_flag(user_id):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT COUNT(*) FROM tasks")
+        total_tasks = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM completed_tasks WHERE user_id = ?", (user_id,))
+        completed = cur.fetchone()[0]
+        completed_flag = 1 if total_tasks > 0 and completed == total_tasks else 0
+        cur.execute("UPDATE users SET all_tasks_completed = ? WHERE id = ?", (completed_flag, user_id))
+
+def update_topics_progress(user_id):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT DISTINCT topic FROM tasks")
+        all_topics = set(row[0] for row in cur.fetchall())
+        topics_total = len(all_topics)
+        cur.execute("""
+            SELECT DISTINCT t.topic
+            FROM completed_tasks c
+            JOIN tasks t ON c.task_id = t.id
+            WHERE c.user_id = ?
+        """, (user_id,))
+        completed_topics = set(row[0] for row in cur.fetchall())
+        topics_completed = len(completed_topics)
+        cur.execute(
+            "UPDATE users SET topics_total = ?, topics_completed = ? WHERE id = ?",
+            (topics_total, topics_completed, user_id)
+        )
+
+def mark_task_completed(user_id, task_id):
+    with connect() as con:
+        con.execute(
+            "INSERT OR IGNORE INTO completed_tasks (user_id, task_id) VALUES (?, ?)",
+            (user_id, task_id)
+        )
+    update_all_tasks_completed_flag(user_id)
+    update_topics_progress(user_id)
