@@ -178,6 +178,15 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         mark_task_completed(user_id, task["id"])
         state["current"] += 1
         if state["current"] < len(state["task_ids"]):
+            is_daily = state.get("is_daily", False)
+            if is_daily:
+                await update.message.reply_text(
+                    "🎉 Вітаю! Ви виконали щоденну задачу!",
+                    reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
+                )
+                solving_state.pop(user_id, None)
+                return
+
             await send_next_task(update, context, user_id)
         else:
             topic = state["topic"]
@@ -213,6 +222,14 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mark_task_completed(user_id, task["id"])
         state["current"] += 1
         if state["current"] < len(state["task_ids"]):
+            is_daily = state.get("is_daily", False)
+            if is_daily:
+                await update.message.reply_text(
+                    "🎉 Вітаю! Ви виконали щоденну задачу!",
+                    reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
+                )
+                solving_state.pop(user_id, None)
+                return
             await send_next_task(update, context, user_id)
         else:
             topic = state["topic"]

@@ -19,7 +19,8 @@ async def handle_daily_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "level": task["level"],
             "task_ids": [task["id"]],
             "current": 0,
-            "current_task": task
+            "current_task": task,
+            "is_daily": True
         }
         await update.message.reply_text(
             f"📅 Щоденна задача:\n\n{task['question']}",
