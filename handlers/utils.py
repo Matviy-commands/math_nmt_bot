@@ -18,11 +18,12 @@ def build_main_menu(user_id):
 
 def build_admin_menu():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("➕ Додати задачу")],
-        [KeyboardButton("📋 Переглянути задачі")],
+        [KeyboardButton("➕ Додати задачу"), KeyboardButton("➕ Додати щоденну задачу")],
+        [KeyboardButton("📋 Переглянути задачі"), KeyboardButton("🔁 Переглянути щоденні задачі")],
         [KeyboardButton("💬 Звернення користувачів")],
         [KeyboardButton("↩️ Назад")]
     ], resize_keyboard=True)
+
 
 
 def build_cancel_keyboard():

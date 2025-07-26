@@ -5,8 +5,6 @@ from handlers.state import feedback_state, user_last_menu, solving_state, change
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from handlers.badges import show_badges
-from db import add_feedback
-
 from db import (
     get_all_topics,
     get_all_tasks_by_topic,
@@ -16,6 +14,8 @@ from db import (
     all_tasks_completed,
     mark_task_completed,
     add_score,
+    add_feedback,
+    get_available_levels_for_topic
 )
 from handlers.utils import build_main_menu
 
@@ -180,17 +180,26 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if state["current"] < len(state["task_ids"]):
             await send_next_task(update, context, user_id)
         else:
+            topic = state["topic"]
+            current_level = state["level"]
+            available_levels = get_available_levels_for_topic(topic, exclude_level=current_level)
+
+            keyboard = []
+            if available_levels:
+                keyboard.append([KeyboardButton(lvl) for lvl in available_levels])
+            keyboard.append([KeyboardButton("Змінити тему")])
+            keyboard.append([KeyboardButton("↩️ Меню")])
+
             await update.message.reply_text(
-                f"🎉 Вітаю! Ви завершили всі задачі рівня «{state['level']}».\n"
+                f"🎉 Вітаю! Ви завершили всі задачі рівня «{current_level}».\n"
                 "Оберіть інший рівень або змініть тему, або поверніться в меню.",
                 reply_markup=ReplyKeyboardMarkup(
-                    [[KeyboardButton(lvl) for lvl in LEVELS if lvl != state['level']],
-                      [KeyboardButton("Змінити тему")],
-                      [KeyboardButton("↩️ Меню")]],
+                    keyboard,
                     resize_keyboard=True
                 )
             )
             solving_state.pop(user_id, None)
+
         return
 
 async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -206,17 +215,26 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if state["current"] < len(state["task_ids"]):
             await send_next_task(update, context, user_id)
         else:
+            topic = state["topic"]
+            current_level = state["level"]
+            available_levels = get_available_levels_for_topic(topic, exclude_level=current_level)
+
+            keyboard = []
+            if available_levels:
+                keyboard.append([KeyboardButton(lvl) for lvl in available_levels])
+            keyboard.append([KeyboardButton("Змінити тему")])
+            keyboard.append([KeyboardButton("↩️ Меню")])
+
             await update.message.reply_text(
-                f"🎉 Вітаю! Ви завершили всі задачі рівня «{state['level']}».\n"
+                f"🎉 Вітаю! Ви завершили всі задачі рівня «{current_level}».\n"
                 "Оберіть інший рівень або змініть тему, або поверніться в меню.",
                 reply_markup=ReplyKeyboardMarkup(
-                    [[KeyboardButton(lvl) for lvl in LEVELS if lvl != state['level']],
-                      [KeyboardButton("Змінити тему")],
-                      [KeyboardButton("↩️ Меню")]],
+                    keyboard,
                     resize_keyboard=True
                 )
             )
             solving_state.pop(user_id, None)
+
         return
 
 

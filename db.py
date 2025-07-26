@@ -42,7 +42,8 @@ def init_db():
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
                 explanation TEXT,
-                photo TEXT
+                photo TEXT,
+                is_daily INTEGER DEFAULT 0  -- 0 = звичайна, 1 = щоденна
             )
         """)
         # --- Додаємо таблицю виконаних задач ---
@@ -132,22 +133,24 @@ def get_random_task(topic=None, level=None, user_id=None):
 def add_task(data):
     with connect() as con:
         con.execute("""
-            INSERT INTO tasks (topic, level, question, answer, explanation, photo)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (topic, level, question, answer, explanation, photo, is_daily)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             data["topic"],
             data["level"],
             data["question"],
             json.dumps(data["answer"]),
             data["explanation"],
-            data.get("photo")
+            data.get("photo"),
+            data.get("is_daily", 0)  # Якщо нема поля — звичайна задача
         ))
 
 
-def get_all_tasks_by_topic(topic):
+
+def get_all_tasks_by_topic(topic, is_daily=0):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT * FROM tasks WHERE topic = ?", (topic,))
+        cur.execute("SELECT * FROM tasks WHERE topic = ? AND is_daily = ?", (topic, is_daily))
         rows = cur.fetchall()
         tasks = []
         for row in rows:
@@ -158,9 +161,10 @@ def get_all_tasks_by_topic(topic):
                 "question": row[3],
                 "answer": json.loads(row[4]),
                 "explanation": row[5],
-                "photo": row[6],  
+                "photo": row[6],
             })
         return tasks
+
 
 # Якщо потрібно — можна додати ще метод, який повертає всі task_id для юзера по темі/рівню
 def all_tasks_completed(user_id, topic, level):
@@ -185,7 +189,8 @@ def get_task_by_id(task_id):
                 "question": row[3],
                 "answer": json.loads(row[4]),
                 "explanation": row[5],
-                "photo": row[6], 
+                "photo": row[6],
+                "is_daily": row[7],
             }
     return None
 
@@ -197,14 +202,15 @@ def update_task_field(task_id, field, value):
     with connect() as con:
         con.execute(f"UPDATE tasks SET {field} = ? WHERE id = ?", (value, task_id))
         
-def get_all_topics():
+def get_all_topics(is_daily=0):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT DISTINCT topic FROM tasks")
+        cur.execute("SELECT DISTINCT topic FROM tasks WHERE is_daily=?", (is_daily,))
         topics = [row[0] for row in cur.fetchall()]
         forbidden = {"🧠 Почати задачу", "Рандомна тема", "❌ Немає тем"}
         clean_topics = [t for t in topics if t not in forbidden and len(t) > 1]
         return clean_topics
+
 
 def get_all_feedback():
     with connect() as con:
@@ -309,3 +315,11 @@ def mark_task_completed(user_id, task_id):
         )
     update_all_tasks_completed_flag(user_id)
     update_topics_progress(user_id)
+
+def get_available_levels_for_topic(topic, exclude_level=None):
+    tasks = get_all_tasks_by_topic(topic)
+    available = set(t['level'] for t in tasks)
+    # Якщо треба — прибрати рівень, який щойно завершили
+    if exclude_level:
+        available.discard(exclude_level)
+    return sorted(available)

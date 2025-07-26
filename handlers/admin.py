@@ -65,16 +65,26 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             reply_markup=build_feedback_pagination_inline_keyboard(0, has_prev, has_next)
         )
         return True
-
-
+    
+    
     # Перехід в адмінку
+    
     if text == "➕ Додати задачу" and user_id in admin_menu_state:
-        add_task_state[user_id] = {"step": "topic"}
+        add_task_state[user_id] = {"step": "topic", "is_daily": 0}
         await update.message.reply_text(
             "📝 Введи тему задачі:",
             reply_markup=build_cancel_keyboard()
         )
         return True
+
+    if text == "➕ Додати щоденну задачу" and user_id in admin_menu_state:
+        add_task_state[user_id] = {"step": "topic", "is_daily": 1}
+        await update.message.reply_text(
+            "📝 Введи тему ЩОДЕННОЇ задачі:",
+            reply_markup=build_cancel_keyboard()
+        )
+        return True
+
 
     if text == "🗑 Видалити задачу" and user_id in admin_menu_state:
         delete_task_state[user_id] = {"step": "ask_id"}
@@ -130,20 +140,32 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             reply_markup=build_topics_keyboard(topics + ["↩️ Назад"])
         )
         return True
+    
+    if text == "📋 Переглянути щоденні задачі" and user_id in admin_menu_state:
+        topics = get_all_topics(is_daily=1)
+        if not topics:
+            await update.message.reply_text("У базі ще немає жодної теми.", reply_markup=build_admin_menu())
+            return True
+        admin_menu_state[user_id] = {"step": "choose_topic_daily"}
+        await update.message.reply_text(
+            "Оберіть тему для перегляду **щоденних задач**:",
+            reply_markup=build_topics_keyboard(topics + ["↩️ Назад"])
+        )
+        return True
 
 
     # --- Крок 2: Обрано тему — стартуємо пагінацію ---
     if user_id in admin_menu_state and isinstance(admin_menu_state[user_id], dict):
         state = admin_menu_state[user_id]
-        topics = get_all_topics()
-        if state.get("step") == "choose_topic" and text in topics:
+        topics = get_all_topics(is_daily=state.get("step") == "choose_topic_daily")
+        if state.get("step") in ["choose_topic", "choose_topic_daily"] and text in topics:
             state["topic"] = text
             state["page"] = 0
             state["step"] = "pagination"
+            state["is_daily"] = 1 if state.get("step") == "choose_topic_daily" else 0
             print(f"[DEBUG] Вибрана тема: {text}, state: {state}")
-            await show_tasks_page(update, user_id, state["topic"], 0)
+            await show_tasks_page(update, user_id, state["topic"], 0, is_daily=state["is_daily"])
             return True
-
 
 
         # Повернення на вибір дії адмінки
@@ -159,19 +181,21 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         if state.get("step") == "pagination":
             topic = state["topic"]
             page = state.get("page", 0)
+            is_daily = state.get("is_daily", 0)
             if text == "⬅️ Попередня":
                 state["page"] = max(0, page - 1)
-                await show_tasks_page(update, user_id, topic, state["page"])
+                await show_tasks_page(update, user_id, topic, state["page"], is_daily=is_daily)
                 return True
             if text == "Наступна ➡️":
                 state["page"] = page + 1
-                await show_tasks_page(update, user_id, topic, state["page"])
+                await show_tasks_page(update, user_id, topic, state["page"], is_daily=is_daily)
                 return True
+
 
     return False
 
-def show_tasks_page_msg(topic, page):
-    all_tasks = get_all_tasks_by_topic(topic)
+def show_tasks_page_msg(topic, page, is_daily=0):
+    all_tasks = get_all_tasks_by_topic(topic, is_daily)
     total = len(all_tasks)
     start = page * TASKS_PER_PAGE
     end = start + TASKS_PER_PAGE
@@ -194,8 +218,8 @@ def show_feedback_page_msg(feedbacks, page):
 
 from telegram import ReplyKeyboardRemove
 
-async def show_tasks_page(update, user_id, topic, page):
-    msg, total = show_tasks_page_msg(topic, page)
+async def show_tasks_page(update, user_id, topic, page, is_daily=0):
+    msg, total = show_tasks_page_msg(topic, page, is_daily)
     has_prev = page > 0
     has_next = (page + 1) * TASKS_PER_PAGE < total
     print(f"[DEBUG] show_tasks_page: topic={topic}, page={page}, has_prev={has_prev}, has_next={has_next}, total={total}")
@@ -280,14 +304,17 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         state["data"] = data
         await update.message.reply_text("📘 Введи пояснення до задачі:", reply_markup=build_cancel_keyboard())
         return True
-
+    
     elif state["step"] == "explanation":
         data["explanation"] = text
+        data["is_daily"] = state.get("is_daily", 0)
         add_task(data)
         await update.message.reply_text("✅ Задачу додано успішно!", reply_markup=build_admin_menu() if user_id in admin_menu_state else build_main_menu(user_id))
         await update.message.reply_text("Гуд гьорл! 😎")
         del add_task_state[user_id]
         return True
+
+
 
     return False
 
@@ -304,6 +331,7 @@ async def handle_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE,
         try:
             task_id = int(text)
             task = get_task_by_id(task_id)
+            state['is_daily'] = task.get('is_daily', 0)
             if not task:
                 await update.message.reply_text("Задача з таким ID не знайдена. Введіть ще раз або ❌ Скасувати.")
                 return True
@@ -319,37 +347,53 @@ async def handle_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, text):
     if user_id not in edit_task_state:
         return False
+
     state = edit_task_state[user_id]
 
+    # Скасування
     if text == "❌ Скасувати":
         del edit_task_state[user_id]
         await update.message.reply_text("Редагування скасовано.", reply_markup=build_admin_menu())
         return True
 
-    if state["step"] == "ask_id":
+    # Крок 1: ID задачі
+    if state.get("step") == "ask_id":
         try:
             task_id = int(text)
             task = get_task_by_id(task_id)
             if not task:
-                await update.message.reply_text("Задача з таким ID не знайдена. Введіть ще раз або ❌ Скасувати.")
+                await update.message.reply_text(
+                    "Задача з таким ID не знайдена. Введіть ще раз або ❌ Скасувати."
+                )
                 return True
+
             state["task_id"] = task_id
-            state["step"] = "edit_topic"
-            # --- Вибір теми
-            topics = get_all_topics()
+            state["is_daily"] = task.get("is_daily", 0)
+            if state["is_daily"]:
+                # Щоденна: одразу питаємо питання
+                state["step"] = "edit_question"
+                await update.message.reply_text(
+                    f"Поточне питання: {task['question']}\nВведіть новий текст задачі або натисніть 'Пропустити':",
+                    reply_markup=skip_cancel_keyboard()
+                )
+            else:
+                # Звичайна: питаємо тему
+                state["step"] = "edit_topic"
+                await update.message.reply_text(
+                    f"Поточна тема: {task['topic']}\nВведіть нову тему або натисніть 'Пропустити':",
+                    reply_markup=skip_cancel_keyboard()
+                )
+            return True
+
+        except ValueError:
             await update.message.reply_text(
-                f"Поточна тема: {task['topic']}\nВведіть нову тему або натисніть 'Пропустити':",
-                reply_markup=skip_cancel_keyboard()
+                "ID має бути цілим числом. Введіть ще раз або ❌ Скасувати."
             )
-
-            return True
-        except Exception:
-            await update.message.reply_text("ID має бути цілим числом. Введіть ще раз або ❌ Скасувати.")
             return True
 
-    elif state["step"] == "edit_topic":
+    # Крок 2: (Лише для звичайної) Тема
+    if state.get("step") == "edit_topic" and not state.get("is_daily"):
         task_id = state["task_id"]
-        # Якщо НЕ Пропустити і НЕ Скасувати — оновлюємо тему на будь-який введений текст
         if text != "Пропустити" and text != "❌ Скасувати":
             if len(text.strip()) == 0:
                 await update.message.reply_text(
@@ -358,10 +402,6 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
                 )
                 return True
             update_task_field(task_id, "topic", text.strip())
-        elif text == "❌ Скасувати":
-            del edit_task_state[user_id]
-            await update.message.reply_text("Редагування скасовано.", reply_markup=build_admin_menu())
-            return True
 
         state["step"] = "edit_question"
         task = get_task_by_id(task_id)
@@ -371,29 +411,31 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
         )
         return True
 
-        
-        state["step"] = "edit_question"
-        task = get_task_by_id(task_id)
-        await update.message.reply_text(
-            f"Поточне питання: {task['question']}\nВведіть новий текст задачі або натисніть 'Пропустити':",
-            reply_markup=skip_cancel_keyboard()
-        )
-        return True
-        
-    elif state["step"] == "edit_question":
+    # Крок 3: Питання
+    if state.get("step") == "edit_question":
         task_id = state["task_id"]
-        # Якщо НЕ Пропустити і є текст — оновлюємо, інакше пропускаємо
         if text != "Пропустити" and text.strip():
             update_task_field(task_id, "question", text.strip())
-        state["step"] = "edit_level"
-        task = get_task_by_id(task_id)
-        await update.message.reply_text(
-            f"Поточний рівень: {task['level']}\nВведіть новий рівень (легкий/середній/важкий) або натисніть 'Пропустити':",
-            reply_markup=skip_cancel_keyboard()
-        )
+        # Для звичайної — наступний крок рівень, для daily — одразу відповідь
+        if state.get("is_daily"):
+            state["step"] = "edit_answer"
+            task = get_task_by_id(task_id)
+            ans_str = ', '.join(task['answer'])
+            await update.message.reply_text(
+                f"Поточна відповідь: {ans_str}\nВведіть нову відповідь через кому або натисніть 'Пропустити':",
+                reply_markup=skip_cancel_keyboard()
+            )
+        else:
+            state["step"] = "edit_level"
+            task = get_task_by_id(task_id)
+            await update.message.reply_text(
+                f"Поточний рівень: {task['level']}\nВведіть новий рівень (легкий/середній/важкий) або натисніть 'Пропустити':",
+                reply_markup=skip_cancel_keyboard()
+            )
         return True
 
-    elif state["step"] == "edit_level":
+    # Крок 4: (Лише для звичайної) Рівень
+    if state.get("step") == "edit_level" and not state.get("is_daily"):
         task_id = state["task_id"]
         level = text.strip()
         if level and level not in LEVELS and level != "Пропустити":
@@ -410,7 +452,8 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
         )
         return True
 
-    elif state["step"] == "edit_answer":
+    # Крок 5: Відповідь
+    if state.get("step") == "edit_answer":
         task_id = state["task_id"]
         if text != "Пропустити" and text.strip():
             ans_list = [a.strip() for a in text.split(",")]
@@ -423,7 +466,8 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
         )
         return True
 
-    elif state["step"] == "edit_explanation":
+    # Крок 6: Пояснення
+    if state.get("step") == "edit_explanation":
         task_id = state["task_id"]
         if text != "Пропустити" and text.strip():
             update_task_field(task_id, "explanation", text.strip())
@@ -435,13 +479,14 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
         )
         return True
 
-    elif state["step"] == "edit_photo":
+    # Крок 7: Фото
+    if state.get("step") == "edit_photo":
         if text == "Пропустити":
             await update.message.reply_text("✅ Задачу оновлено.", reply_markup=build_admin_menu())
             del edit_task_state[user_id]
             admin_menu_state[user_id] = True
             return True
-        # Фото обробляється окремо у handle_edit_task_photo
+        # Фото обробляється окремо в handle_edit_task_photo
         if update.message.photo:
             return False
         else:
@@ -465,6 +510,8 @@ async def handle_task_pagination_callback(update: Update, context: ContextTypes.
     state = admin_menu_state[user_id]
     topic = state["topic"]
     page = state["page"]
+    is_daily = state.get("is_daily", 0)
+
 
     if query.data.startswith("prev_"):
         page = max(0, page - 1)
@@ -478,7 +525,7 @@ async def handle_task_pagination_callback(update: Update, context: ContextTypes.
         await query.answer()
         return
 
-    msg, total = show_tasks_page_msg(topic, page)
+    msg, total = show_tasks_page_msg(topic, page, is_daily)
     has_prev = page > 0
     has_next = (page + 1) * TASKS_PER_PAGE < total
 
@@ -570,3 +617,4 @@ async def handle_admin_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # 3. Якщо не в стейті — просто ігноруємо або даємо підказку
     await update.message.reply_text("Зараз фото не очікується. Спробуйте спочатку вибрати дію в меню.")
+
