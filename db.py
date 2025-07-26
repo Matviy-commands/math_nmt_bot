@@ -1,9 +1,9 @@
 import os
 import psycopg2
 import json
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
-load_dotenv()
+# load_dotenv()
 
 def connect():
     return psycopg2.connect(
