@@ -1,9 +1,9 @@
 import os
 import psycopg2
 import json
-# from dotenv import load_dotenv
+from dotenv import load_dotenv
 
-# load_dotenv()
+load_dotenv()
 
 def connect():
     return psycopg2.connect(
@@ -208,11 +208,12 @@ def update_task_field(task_id, field, value):
 def get_all_topics(is_daily=0):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT DISTINCT topic FROM tasks WHERE is_daily=%s", (is_daily,))
+        cur.execute("SELECT DISTINCT topic FROM tasks WHERE is_daily=%s", (int(is_daily),))
         topics = [row[0] for row in cur.fetchall()]
         forbidden = {"🧠 Почати задачу", "Рандомна тема", "❌ Немає тем"}
         clean_topics = [t for t in topics if t not in forbidden and len(t) > 1]
         return clean_topics
+
 
 def get_all_feedback():
     with connect() as con:

@@ -7,6 +7,7 @@ LEVELS = ["легкий", "середній", "важкий"]
 def build_main_menu(user_id):
     keyboard = [
         [KeyboardButton("🧠 Почати задачу")],
+        [KeyboardButton("📚 Матеріали")],
         [KeyboardButton("📊 Мій прогрес")],
         [KeyboardButton("🔁 Щоденна задача")],
         [KeyboardButton("❓ Допомога / Зв’язок")]

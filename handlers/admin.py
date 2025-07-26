@@ -130,7 +130,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     # --- Крок 1: Перехід на вибір теми для перегляду задач ---
     if text == "📋 Переглянути задачі" and user_id in admin_menu_state:
-        topics = get_all_topics()
+        topics = get_all_topics(is_daily=0)
         if not topics:
             await update.message.reply_text("У базі ще немає жодної теми.", reply_markup=build_admin_menu())
             return True
@@ -140,7 +140,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             reply_markup=build_topics_keyboard(topics + ["↩️ Назад"])
         )
         return True
-    
+
     if text == "📋 Переглянути щоденні задачі" and user_id in admin_menu_state:
         topics = get_all_topics(is_daily=1)
         if not topics:
@@ -157,15 +157,17 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     # --- Крок 2: Обрано тему — стартуємо пагінацію ---
     if user_id in admin_menu_state and isinstance(admin_menu_state[user_id], dict):
         state = admin_menu_state[user_id]
-        topics = get_all_topics(is_daily=state.get("step") == "choose_topic_daily")
+        topics = get_all_topics(is_daily=int(state.get("step") == "choose_topic_daily"))
         if state.get("step") in ["choose_topic", "choose_topic_daily"] and text in topics:
             state["topic"] = text
             state["page"] = 0
-            state["step"] = "pagination"
-            state["is_daily"] = 1 if state.get("step") == "choose_topic_daily" else 0
+            state["is_daily"] = 1 if state.get("step") == "choose_topic_daily" else 0  # <-- спочатку!
+            state["step"] = "pagination"  # <-- потім змінюй step
             print(f"[DEBUG] Вибрана тема: {text}, state: {state}")
             await show_tasks_page(update, user_id, state["topic"], 0, is_daily=state["is_daily"])
             return True
+
+
 
 
         # Повернення на вибір дії адмінки
@@ -196,6 +198,8 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 def show_tasks_page_msg(topic, page, is_daily=0):
     all_tasks = get_all_tasks_by_topic(topic, is_daily)
+    print(f"DEBUG show_tasks_page_msg: all_tasks={all_tasks}")
+
     total = len(all_tasks)
     start = page * TASKS_PER_PAGE
     end = start + TASKS_PER_PAGE
@@ -338,6 +342,7 @@ async def handle_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE,
             delete_task(task_id)
             await update.message.reply_text(f"✅ Задача {task_id} видалена.", reply_markup=build_admin_menu())
             del delete_task_state[user_id]
+            admin_menu_state[user_id] = True
             return True
         except Exception:
             await update.message.reply_text("ID має бути цілим числом. Введіть ще раз або ❌ Скасувати.")

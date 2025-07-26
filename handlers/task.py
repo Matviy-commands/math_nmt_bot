@@ -5,6 +5,7 @@ from handlers.state import feedback_state, user_last_menu, solving_state, change
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from handlers.badges import show_badges
+from handlers.materials import MATERIALS
 from db import (
     get_all_topics,
     get_all_tasks_by_topic,
@@ -293,7 +294,28 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await show_rating(update, context)
         return
 
+    # if text == "📚 Матеріали":
+    #     msg = "<b>Матеріали для підготовки до НМТ:</b>\n\n"
+    #     for m in MATERIALS:
+    #         msg += f"🔗 <a href='{m['url']}'>{m['title']}</a>\n"
+    #     await update.message.reply_text(
+    #         msg,
+    #         parse_mode="HTML",
+    #         disable_web_page_preview=False
+    #     )
+    #     return
+    
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+    if text == "📚 Матеріали":
+        buttons = [
+            [InlineKeyboardButton(m["title"], url=m["url"])] for m in MATERIALS
+        ]
+        await update.message.reply_text(
+            "Оберіть матеріал для перегляду:",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+        return
 
     if text in LEVELS and user_id not in start_task_state:
         # Хоче пройти інший рівень — запускаємо збереження стану та handle_task_step
