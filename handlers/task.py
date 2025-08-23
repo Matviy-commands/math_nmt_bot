@@ -1,11 +1,21 @@
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+from telegram.constants import ParseMode
+
 from handlers.progress import show_progress, show_rating
 from handlers.daily import handle_daily_task
 from handlers.state import feedback_state, user_last_menu, solving_state, change_name_state
-from telegram.ext import ContextTypes
-from telegram.constants import ParseMode
 from handlers.badges import show_badges
 from handlers.materials import MATERIALS
+
+from handlers.utils import (
+    build_main_menu,
+    build_category_keyboard,
+    build_back_to_menu_keyboard,
+    CATEGORIES,               
+    LEVELS,
+)
+
 from db import (
     get_all_topics,
     get_all_tasks_by_topic,
@@ -16,11 +26,9 @@ from db import (
     mark_task_completed,
     add_score,
     add_feedback,
-    get_available_levels_for_topic
+    get_available_levels_for_topic,
+    get_all_topics_by_category,
 )
-from handlers.utils import build_main_menu
-
-LEVELS = ["легкий", "середній", "важкий"]
 
 HELP_TEXT = """
 🆘 <b>Допомога та зв'язок</b>
@@ -41,14 +49,6 @@ start_task_state = {}
 def build_task_keyboard():
     return ReplyKeyboardMarkup([[KeyboardButton("❓ Не знаю")]], resize_keyboard=True)
 
-def build_topic_keyboard():
-    topics = get_all_topics()  # Теми з бази
-    # Якщо нема жодної теми — показати інформативну кнопку
-    if not topics:
-        return ReplyKeyboardMarkup([[KeyboardButton("❌ Немає тем")]], resize_keyboard=True)
-    buttons = [[KeyboardButton(topic)] for topic in topics]
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-
 def build_level_keyboard(levels):
     buttons = [[KeyboardButton(lvl)] for lvl in levels]
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
@@ -65,11 +65,38 @@ async def task_entrypoint(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
-    topics = get_all_topics()
 
     if user_id in start_task_state:
         state = start_task_state[user_id]
-        # 1. Вибір теми
+
+        # вибір категорії
+        if state["step"] == "category" and text in CATEGORIES:
+            state["category"] = text
+            from db import get_all_topics_by_category
+            topics = get_all_topics_by_category(text)
+            if not topics:
+                await update.message.reply_text(
+                    "❌ У цій категорії немає тем.\n\nНатисни «↩️ Меню», щоб повернутись.",
+                    reply_markup=build_back_to_menu_keyboard()
+                )
+                return
+
+            state["step"] = "topic"
+            await update.message.reply_text("Оберіть тему:", reply_markup=build_topic_keyboard(topics))
+            return
+        
+        # якщо натиснули назад -> повертаємось на вибір категорії
+        if state["step"] == "topic" and text == "↩️ Назад":
+            state["step"] = "category"
+            await update.message.reply_text(
+                "Оберіть категорію:",
+                reply_markup=build_category_keyboard()
+            )
+            return
+
+
+        # вибір теми
+        topics = get_all_topics()  # або фільтруй по категорії, якщо треба
         if state["step"] == "topic" and text in topics:
             available_levels = set([t["level"] for t in get_all_tasks_by_topic(text)])
             if not available_levels:
@@ -173,7 +200,7 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             add_score(user_id, 10)
             msg = "✅ Правильно! +10 балів 🎉"
         else:
-            msg = "❌ Неправильно."
+            msg = "❌ Неправильна відповідь.\n⚠️ Бали за цю задачу не нараховано."
         msg += f"\n📖 Пояснення: {explanation}"
         await update.message.reply_text(msg)
         mark_task_completed(user_id, task["id"])
@@ -190,6 +217,18 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
             await send_next_task(update, context, user_id)
         else:
+            # кінець списку задач
+            is_daily = state.get("is_daily", False)
+            if is_daily:
+                await update.message.reply_text(
+                    "🎉 Готово! Щоденна задача на сьогодні виконана.\n"
+                    "Повернись завтра по нову 💪",
+                    reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
+                )
+                solving_state.pop(user_id, None)
+                return
+
+            # --- звичайні (не daily) задачі: показуємо стандартне завершення рівня ---
             topic = state["topic"]
             current_level = state["level"]
             available_levels = get_available_levels_for_topic(topic, exclude_level=current_level)
@@ -203,12 +242,10 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(
                 f"🎉 Вітаю! Ви завершили всі задачі рівня «{current_level}».\n"
                 "Оберіть інший рівень або змініть тему, або поверніться в меню.",
-                reply_markup=ReplyKeyboardMarkup(
-                    keyboard,
-                    resize_keyboard=True
-                )
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
             )
             solving_state.pop(user_id, None)
+
 
         return
 
@@ -218,8 +255,9 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state = solving_state[user_id]
         task = state.get("current_task")
         await update.message.reply_text(
-            f"📖 Пояснення: {task['explanation'].strip() if task['explanation'] else 'Пояснення відсутнє!'}"
+            f"🤔 Обрано варіант 'Не знаю'.\n⚠️ Бали за цю задачу не нараховано.\n\n📖 Пояснення: {task['explanation'].strip() if task['explanation'] else 'Пояснення відсутнє!'}"
         )
+
         mark_task_completed(user_id, task["id"])
         state["current"] += 1
         if state["current"] < len(state["task_ids"]):
@@ -233,6 +271,18 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             await send_next_task(update, context, user_id)
         else:
+            # кінець списку задач
+            is_daily = state.get("is_daily", False)
+            if is_daily:
+                await update.message.reply_text(
+                    "🎯 Щоденна задача завершена.\n"
+                    "⚠️ За цю задачу бали не нараховано.",
+                    reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
+                )
+                solving_state.pop(user_id, None)
+                return
+
+            # --- звичайні (не daily) задачі: стандартне завершення рівня ---
             topic = state["topic"]
             current_level = state["level"]
             available_levels = get_available_levels_for_topic(topic, exclude_level=current_level)
@@ -246,12 +296,10 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"🎉 Вітаю! Ви завершили всі задачі рівня «{current_level}».\n"
                 "Оберіть інший рівень або змініть тему, або поверніться в меню.",
-                reply_markup=ReplyKeyboardMarkup(
-                    keyboard,
-                    resize_keyboard=True
-                )
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
             )
             solving_state.pop(user_id, None)
+
 
         return
 
@@ -263,6 +311,12 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     username = update.effective_user.username or ""
     if username:
         update_user(user_id, "username", username)
+
+    if text == "🧠 Почати задачу":
+        await update.message.reply_text("Оберіть категорію:", reply_markup=build_category_keyboard())
+        start_task_state[user_id] = {"step": "category"}
+        return
+
 
     if text == "✏️ Змінити імʼя в рейтингу":
         change_name_state[user_id] = True
@@ -304,8 +358,6 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     #         disable_web_page_preview=False
     #     )
     #     return
-    
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
     if text == "📚 Матеріали":
         buttons = [
@@ -465,3 +517,13 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=build_main_menu(user_id)
         )
         return
+    
+def build_topic_keyboard(topics=None):
+    if topics is None:
+        topics = get_all_topics()
+    if not topics:
+        return ReplyKeyboardMarkup([[KeyboardButton("❌ Немає тем")]], resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton(t)] for t in topics] + [[KeyboardButton("↩️ Назад")]],
+        resize_keyboard=True
+    )

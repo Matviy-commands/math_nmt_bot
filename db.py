@@ -111,7 +111,10 @@ def get_level_by_score(score):
 def get_random_task(topic=None, level=None, user_id=None):
     with connect() as con:
         cur = con.cursor()
-        query = "SELECT * FROM tasks WHERE 1=1"
+        query = """
+            SELECT id, category, topic, level, question, answer, explanation, photo, is_daily
+            FROM tasks WHERE 1=1
+        """
         params = []
         if topic:
             query += " AND topic = %s"
@@ -128,21 +131,26 @@ def get_random_task(topic=None, level=None, user_id=None):
         if row:
             return {
                 "id": row[0],
-                "topic": row[1],
-                "level": row[2],
-                "question": row[3],
-                "answer": json.loads(row[4]),
-                "explanation": row[5],
-                "photo": row[6]
+                "category": row[1],
+                "topic": row[2],
+                "level": row[3],
+                "question": row[4],
+                "answer": json.loads(row[5]),
+                "explanation": row[6],
+                "photo": row[7],
+                "is_daily": row[8],
             }
     return None
 
+
 def add_task(data):
+    category = data.get("category")
     with connect() as con:
         con.cursor().execute("""
-            INSERT INTO tasks (topic, level, question, answer, explanation, photo, is_daily)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO tasks (category, topic, level, question, answer, explanation, photo, is_daily)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """, (
+            category,
             data["topic"],
             data["level"],
             data["question"],
@@ -152,23 +160,27 @@ def add_task(data):
             data.get("is_daily", 0)
         ))
 
+
 def get_all_tasks_by_topic(topic, is_daily=0):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT * FROM tasks WHERE topic = %s AND is_daily = %s", (topic, is_daily))
+        cur.execute("SELECT id, category, topic, level, question, answer, explanation, photo, is_daily FROM tasks WHERE topic = %s AND is_daily = %s", (topic, is_daily))
         rows = cur.fetchall()
         tasks = []
         for row in rows:
             tasks.append({
                 "id": row[0],
-                "topic": row[1],
-                "level": row[2],
-                "question": row[3],
-                "answer": json.loads(row[4]),
-                "explanation": row[5],
-                "photo": row[6],
+                "category": row[1],
+                "topic": row[2],
+                "level": row[3],
+                "question": row[4],
+                "answer": json.loads(row[5]),
+                "explanation": row[6],
+                "photo": row[7],
+                "is_daily": row[8],
             })
         return tasks
+
 
 def all_tasks_completed(user_id, topic, level):
     with connect() as con:
@@ -182,18 +194,19 @@ def all_tasks_completed(user_id, topic, level):
 def get_task_by_id(task_id):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+        cur.execute("SELECT id, category, topic, level, question, answer, explanation, photo, is_daily FROM tasks WHERE id = %s", (task_id,))
         row = cur.fetchone()
         if row:
             return {
                 "id": row[0],
-                "topic": row[1],
-                "level": row[2],
-                "question": row[3],
-                "answer": json.loads(row[4]),
-                "explanation": row[5],
-                "photo": row[6],
-                "is_daily": row[7],
+                "category": row[1],
+                "topic": row[2],
+                "level": row[3],
+                "question": row[4],
+                "answer": json.loads(row[5]),
+                "explanation": row[6],
+                "photo": row[7],
+                "is_daily": row[8],
             }
     return None
 
@@ -325,3 +338,9 @@ def get_available_levels_for_topic(topic, exclude_level=None):
     if exclude_level:
         available.discard(exclude_level)
     return sorted(available)
+
+def get_all_topics_by_category(category, is_daily=0):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT DISTINCT topic FROM tasks WHERE category=%s AND is_daily=%s", (category, int(is_daily)))
+        return [row[0] for row in cur.fetchall()]

@@ -1,12 +1,12 @@
 import os
-# from dotenv import load_dotenv
+from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
 from handlers.start import start_handler
+from handlers.state import admin_menu_state
 from handlers.admin import (
     admin_message_handler,
     addtask_handler,
-    admin_menu_state,
     handle_task_pagination_callback,
     handle_feedback_pagination_callback,
     handle_admin_photo,
@@ -14,7 +14,7 @@ from handlers.admin import (
 from handlers.task import main_message_handler
 from db import init_db
 
-# load_dotenv()
+load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 async def router(update, context):

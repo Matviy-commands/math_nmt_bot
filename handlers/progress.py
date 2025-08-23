@@ -1,14 +1,16 @@
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from handlers.state import change_name_state
 from telegram.ext import ContextTypes
-from handlers.utils import admin_ids
+
+from handlers.state import change_name_state
+from handlers.utils import admin_ids, CATEGORIES, LEVELS 
+
 from db import (
     get_user_field, get_level_by_score,
     get_all_topics, get_all_tasks_by_topic,
-    get_user_completed_count, get_top_users, get_user_rank
+    get_user_completed_count, get_top_users, get_user_rank,
+    get_all_topics_by_category
 )
 
-LEVELS = ["легкий", "середній", "важкий"]
 
 async def show_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -22,14 +24,17 @@ async def show_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg += f"• <b>Поточний рівень:</b> {level}\n\n"
 
     msg += "<b>Прогрес по темах:</b>\n"
-    for topic in topics:
-        for lvl in LEVELS:
-            tasks = get_all_tasks_by_topic(topic)
-            n_total = len([t for t in tasks if t['level'] == lvl])
-            n_done = get_user_completed_count(user_id, topic, lvl)
-            if n_total > 0:
-                percent = int(n_done / n_total * 100)
-                msg += f"  — {topic} ({lvl}): {n_done}/{n_total} ({percent}%)\n"
+    for category in CATEGORIES:
+        msg += f"\n<b>{category}:</b>\n"
+        topics = get_all_topics_by_category(category)
+        for topic in topics:
+            for lvl in LEVELS:
+                tasks = get_all_tasks_by_topic(topic)
+                n_total = len([t for t in tasks if t['level'] == lvl])
+                n_done = get_user_completed_count(user_id, topic, lvl)
+                if n_total > 0:
+                    percent = int(n_done / n_total * 100)
+                    msg += f"  — {topic} ({lvl}): {n_done}/{n_total} ({percent}%)\n"
 
     msg += "\n<b>Відкриті бейджі:</b> 🔓 (незабаром)\n"
 

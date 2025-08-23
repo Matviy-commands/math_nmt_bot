@@ -1,3 +1,14 @@
+from telegram import Update, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import ContextTypes
+
+from handlers.state import (
+    feedback_state,
+    admin_menu_state,
+    add_task_state,
+    edit_task_state,
+    delete_task_state,
+)
+
 from handlers.utils import (
     build_admin_menu,
     build_cancel_keyboard,
@@ -6,20 +17,26 @@ from handlers.utils import (
     build_topics_keyboard,
     build_tasks_pagination_inline_keyboard,
     build_feedback_pagination_inline_keyboard,
-    skip_cancel_keyboard
+    skip_cancel_keyboard,
+    build_category_keyboard,  
+    CATEGORIES,                
+    LEVELS,                    
+    admin_ids,                 
 )
-from db import *
-from telegram import Update, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import ContextTypes
+
+from db import (
+    get_all_feedback,
+    get_all_topics_by_category,
+    get_all_topics,
+    get_all_tasks_by_topic,
+    get_task_by_id,
+    delete_task,
+    update_task_field,
+    add_task,
+)
+
 from handlers.state import feedback_state
 
-add_task_state = {}
-admin_menu_state = {}
-edit_task_state = {}
-delete_task_state = {}
-
-LEVELS = ["легкий", "середній", "важкий"]
-admin_ids = [1070282751, 981761965]
 TASKS_PER_PAGE = 5
 FEEDBACKS_PER_PAGE = 5
 
@@ -70,13 +87,25 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     # Перехід в адмінку
     
     if text == "➕ Додати задачу" and user_id in admin_menu_state:
-        add_task_state[user_id] = {"step": "topic", "is_daily": 0}
+        add_task_state[user_id] = {"step": "category", "is_daily": 0}
         await update.message.reply_text(
-            "📝 Введи тему задачі:",
-            reply_markup=build_cancel_keyboard()
+            "Оберіть категорію задачі:",
+            reply_markup=build_category_keyboard()
         )
         return True
 
+    if user_id in add_task_state and add_task_state[user_id]["step"] == "category" and text in CATEGORIES:
+        state = add_task_state[user_id]
+        data = state.get("data", {})
+        data["category"] = text
+        state["step"] = "topic"
+        state["data"] = data
+        await update.message.reply_text("Введіть тему задачі:", reply_markup=build_cancel_keyboard())
+        return True
+
+
+
+    
     if text == "➕ Додати щоденну задачу" and user_id in admin_menu_state:
         add_task_state[user_id] = {"step": "topic", "is_daily": 1}
         await update.message.reply_text(
@@ -84,6 +113,14 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             reply_markup=build_cancel_keyboard()
         )
         return True
+    
+    # if text == "➕ Додати щоденну задачу" and user_id in admin_menu_state:
+    #     add_task_state[user_id] = {"step": "category", "is_daily": 1}
+    #     await update.message.reply_text(
+    #         "Оберіть категорію ЩОДЕННОЇ задачі:",
+    #         reply_markup=build_category_keyboard()
+    #     )
+    #     return True
 
 
     if text == "🗑 Видалити задачу" and user_id in admin_menu_state:
@@ -130,16 +167,28 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     # --- Крок 1: Перехід на вибір теми для перегляду задач ---
     if text == "📋 Переглянути задачі" and user_id in admin_menu_state:
-        topics = get_all_topics(is_daily=0)
-        if not topics:
-            await update.message.reply_text("У базі ще немає жодної теми.", reply_markup=build_admin_menu())
-            return True
-        admin_menu_state[user_id] = {"step": "choose_topic"}
+        admin_menu_state[user_id] = {"step": "choose_category"}
         await update.message.reply_text(
-            "Оберіть тему для перегляду задач:",
-            reply_markup=build_topics_keyboard(topics + ["↩️ Назад"])
+            "Оберіть категорію для перегляду задач:",
+            reply_markup=build_category_keyboard()
         )
         return True
+
+    if user_id in admin_menu_state and isinstance(admin_menu_state[user_id], dict):
+        state = admin_menu_state[user_id]
+        if state.get("step") == "choose_category" and text in CATEGORIES:
+            state["category"] = text
+            topics = get_all_topics_by_category(text)
+            if not topics:
+                await update.message.reply_text("У цій категорії немає тем.", reply_markup=build_admin_menu())
+                admin_menu_state[user_id] = True
+                return True
+            state["step"] = "choose_topic"
+            await update.message.reply_text(
+                "Оберіть тему:",
+                reply_markup=build_topics_keyboard(topics + ["↩️ Назад"])
+            )
+            return True
 
     if text == "📋 Переглянути щоденні задачі" and user_id in admin_menu_state:
         topics = get_all_topics(is_daily=1)
@@ -148,7 +197,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             return True
         admin_menu_state[user_id] = {"step": "choose_topic_daily"}
         await update.message.reply_text(
-            "Оберіть тему для перегляду **щоденних задач**:",
+            "Оберіть тему для перегляду щоденних задач:",
             reply_markup=build_topics_keyboard(topics + ["↩️ Назад"])
         )
         return True
@@ -312,6 +361,8 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, us
     elif state["step"] == "explanation":
         data["explanation"] = text
         data["is_daily"] = state.get("is_daily", 0)
+        if data["is_daily"] == 1 and "category" not in data:
+            data["category"] = "Щоденні"   
         add_task(data)
         await update.message.reply_text("✅ Задачу додано успішно!", reply_markup=build_admin_menu() if user_id in admin_menu_state else build_main_menu(user_id))
         await update.message.reply_text("Гуд гьорл! 😎")
@@ -335,10 +386,10 @@ async def handle_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE,
         try:
             task_id = int(text)
             task = get_task_by_id(task_id)
-            state['is_daily'] = task.get('is_daily', 0)
             if not task:
                 await update.message.reply_text("Задача з таким ID не знайдена. Введіть ще раз або ❌ Скасувати.")
                 return True
+            state['is_daily'] = task.get('is_daily', 0)
             delete_task(task_id)
             await update.message.reply_text(f"✅ Задача {task_id} видалена.", reply_markup=build_admin_menu())
             del delete_task_state[user_id]
