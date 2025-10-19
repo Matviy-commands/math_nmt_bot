@@ -1,6 +1,7 @@
 import os
 import psycopg2
 import json
+from datetime import date, timedelta
 # from dotenv import load_dotenv
 
 # load_dotenv()
@@ -18,36 +19,32 @@ def connect():
 def init_db():
     with connect() as con:
         cur = con.cursor()
+        # --- streak tracking ---
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_activity DATE")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_days INTEGER DEFAULT 0")
+        # users
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id BIGINT PRIMARY KEY,
+                username TEXT,
+                display_name TEXT,
                 score INTEGER DEFAULT 0,
                 topic TEXT,
-                level TEXT,
                 last_daily TEXT,
-                topics_completed INTEGER DEFAULT 0,
-                topics_total INTEGER DEFAULT 0,
-                daily_streak INTEGER DEFAULT 0,
                 feedbacks INTEGER DEFAULT 0,
                 all_tasks_completed INTEGER DEFAULT 0,
-                display_name TEXT,
-                username TEXT
+                topics_total INTEGER DEFAULT 0,
+                topics_completed INTEGER DEFAULT 0
             )
         """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS badges (
-                user_id BIGINT,
-                badge TEXT,
-                PRIMARY KEY (user_id, badge)
-            )
-        """)
-
+        # tasks (одна, з task_type і category)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 id SERIAL PRIMARY KEY,
+                category TEXT,
                 topic TEXT NOT NULL,
                 level TEXT NOT NULL,
+                task_type TEXT,
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
                 explanation TEXT,
@@ -55,6 +52,7 @@ def init_db():
                 is_daily INTEGER DEFAULT 0
             )
         """)
+        # completed_tasks
         cur.execute("""
             CREATE TABLE IF NOT EXISTS completed_tasks (
                 user_id BIGINT,
@@ -62,6 +60,7 @@ def init_db():
                 PRIMARY KEY (user_id, task_id)
             )
         """)
+        # feedback
         cur.execute("""
             CREATE TABLE IF NOT EXISTS feedback (
                 id SERIAL PRIMARY KEY,
@@ -71,7 +70,34 @@ def init_db():
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        con.commit()  # Не забувай!
+        # badges
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS badges (
+                user_id BIGINT,
+                badge TEXT,
+                PRIMARY KEY (user_id, badge)
+            )
+        """)
+        # --- topic-correct-streaks (per topic) ---
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_topic_streaks (
+                user_id BIGINT NOT NULL,
+                topic   TEXT    NOT NULL,
+                streak  INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, topic)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_topic_streak_awards (
+                user_id   BIGINT  NOT NULL,
+                topic     TEXT    NOT NULL,
+                milestone INTEGER NOT NULL,
+                PRIMARY KEY (user_id, topic, milestone)
+            )
+        """)
+
+
+        con.commit()
 
 def get_user(user_id):
     with connect() as con:
@@ -111,8 +137,9 @@ def get_level_by_score(score):
 def get_random_task(topic=None, level=None, user_id=None):
     with connect() as con:
         cur = con.cursor()
+        # Порядок полів підібраний під мапінг нижче
         query = """
-            SELECT id, category, topic, level, question, answer, explanation, photo, is_daily
+            SELECT id, category, topic, level, task_type, question, answer, explanation, photo, is_daily
             FROM tasks WHERE 1=1
         """
         params = []
@@ -134,25 +161,26 @@ def get_random_task(topic=None, level=None, user_id=None):
                 "category": row[1],
                 "topic": row[2],
                 "level": row[3],
-                "question": row[4],
-                "answer": json.loads(row[5]),
-                "explanation": row[6],
-                "photo": row[7],
-                "is_daily": row[8],
+                "task_type": row[4],
+                "question": row[5],
+                "answer": json.loads(row[6]),
+                "explanation": row[7],
+                "photo": row[8],
+                "is_daily": row[9],
             }
     return None
-
 
 def add_task(data):
     category = data.get("category")
     with connect() as con:
         con.cursor().execute("""
-            INSERT INTO tasks (category, topic, level, question, answer, explanation, photo, is_daily)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO tasks (category, topic, level, task_type, question, answer, explanation, photo, is_daily)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             category,
             data["topic"],
-            data["level"],
+            data.get("level") or "",          
+            data.get("task_type"),            
             data["question"],
             json.dumps(data["answer"]),
             data["explanation"],
@@ -161,10 +189,16 @@ def add_task(data):
         ))
 
 
+
 def get_all_tasks_by_topic(topic, is_daily=0):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT id, category, topic, level, question, answer, explanation, photo, is_daily FROM tasks WHERE topic = %s AND is_daily = %s", (topic, is_daily))
+        cur.execute("""
+            SELECT id, category, topic, level, task_type, question, answer, explanation, photo, is_daily
+            FROM tasks
+            WHERE topic = %s AND is_daily = %s
+            ORDER BY id
+        """, (topic, is_daily))
         rows = cur.fetchall()
         tasks = []
         for row in rows:
@@ -173,14 +207,14 @@ def get_all_tasks_by_topic(topic, is_daily=0):
                 "category": row[1],
                 "topic": row[2],
                 "level": row[3],
-                "question": row[4],
-                "answer": json.loads(row[5]),
-                "explanation": row[6],
-                "photo": row[7],
-                "is_daily": row[8],
+                "task_type": row[4],
+                "question": row[5],
+                "answer": json.loads(row[6]),
+                "explanation": row[7],
+                "photo": row[8],
+                "is_daily": row[9],
             })
         return tasks
-
 
 def all_tasks_completed(user_id, topic, level):
     with connect() as con:
@@ -194,7 +228,10 @@ def all_tasks_completed(user_id, topic, level):
 def get_task_by_id(task_id):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT id, category, topic, level, question, answer, explanation, photo, is_daily FROM tasks WHERE id = %s", (task_id,))
+        cur.execute("""
+            SELECT id, category, topic, level, task_type, question, answer, explanation, photo, is_daily
+            FROM tasks WHERE id = %s
+        """, (task_id,))
         row = cur.fetchone()
         if row:
             return {
@@ -202,11 +239,12 @@ def get_task_by_id(task_id):
                 "category": row[1],
                 "topic": row[2],
                 "level": row[3],
-                "question": row[4],
-                "answer": json.loads(row[5]),
-                "explanation": row[6],
-                "photo": row[7],
-                "is_daily": row[8],
+                "task_type": row[4],
+                "question": row[5],
+                "answer": json.loads(row[6]),
+                "explanation": row[7],
+                "photo": row[8],
+                "is_daily": row[9],
             }
     return None
 
@@ -344,3 +382,100 @@ def get_all_topics_by_category(category, is_daily=0):
         cur = con.cursor()
         cur.execute("SELECT DISTINCT topic FROM tasks WHERE category=%s AND is_daily=%s", (category, int(is_daily)))
         return [row[0] for row in cur.fetchall()]
+    
+def get_completed_task_ids(user_id, topic=None, level=None):
+    """
+    Повертає set() з ID задач, які користувач уже виконав.
+    Можна фільтрувати за topic/level.
+    """
+    with connect() as con:
+        cur = con.cursor()
+        if topic and level:
+            cur.execute("""
+                SELECT c.task_id
+                FROM completed_tasks c
+                JOIN tasks t ON t.id = c.task_id
+                WHERE c.user_id = %s AND t.topic = %s AND t.level = %s
+            """, (user_id, topic, level))
+        elif topic:
+            cur.execute("""
+                SELECT c.task_id
+                FROM completed_tasks c
+                JOIN tasks t ON t.id = c.task_id
+                WHERE c.user_id = %s AND t.topic = %s
+            """, (user_id, topic))
+        else:
+            cur.execute("SELECT task_id FROM completed_tasks WHERE user_id = %s", (user_id,))
+        return {row[0] for row in cur.fetchall()}
+
+    
+def update_streak_and_reward(user_id):
+    today = date.today()
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT last_activity, streak_days FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        last_activity, streak_days = (row if row else (None, 0))
+
+        if last_activity == today:
+            return streak_days, 0
+
+        if last_activity == (today - timedelta(days=1)):
+            new_streak = (streak_days or 0) + 1
+        else:
+            new_streak = 1
+
+        cur.execute(
+            "UPDATE users SET last_activity=%s, streak_days=%s WHERE id=%s",
+            (today, new_streak, user_id)
+        )
+
+        reward_map = {3: 5, 7: 10, 14: 20, 30: 50}
+        reward = reward_map.get(new_streak, 0)
+        if reward:
+            cur.execute("UPDATE users SET score = score + %s WHERE id=%s", (reward, user_id))
+
+        return new_streak, reward
+
+def get_topic_streak(user_id: int, topic: str) -> int:
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("SELECT streak FROM user_topic_streaks WHERE user_id=%s AND topic=%s", (user_id, topic))
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+def set_topic_streak(user_id: int, topic: str, value: int):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("""
+            INSERT INTO user_topic_streaks (user_id, topic, streak)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, topic) DO UPDATE SET streak=EXCLUDED.streak
+        """, (user_id, topic, value))
+
+def inc_topic_streak(user_id: int, topic: str) -> int:
+    current = get_topic_streak(user_id, topic)
+    new_val = current + 1
+    set_topic_streak(user_id, topic, new_val)
+    return new_val
+
+def reset_topic_streak(user_id: int, topic: str):
+    set_topic_streak(user_id, topic, 0)
+
+def has_topic_streak_award(user_id: int, topic: str, milestone: int) -> bool:
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("""
+            SELECT 1 FROM user_topic_streak_awards
+            WHERE user_id=%s AND topic=%s AND milestone=%s
+        """, (user_id, topic, milestone))
+        return bool(cur.fetchone())
+
+def mark_topic_streak_award(user_id: int, topic: str, milestone: int):
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("""
+            INSERT INTO user_topic_streak_awards (user_id, topic, milestone)
+            VALUES (%s, %s, %s)
+            ON CONFLICT DO NOTHING
+        """, (user_id, topic, milestone))

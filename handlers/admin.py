@@ -1,6 +1,6 @@
 from telegram import Update, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ContextTypes
-
+import json
 from handlers.state import (
     feedback_state,
     admin_menu_state,
@@ -21,7 +21,9 @@ from handlers.utils import (
     build_category_keyboard,  
     CATEGORIES,                
     LEVELS,                    
-    admin_ids,                 
+    admin_ids,
+    build_type_keyboard,         
+    TYPE_BUTTONS,                  
 )
 
 from db import (
@@ -255,7 +257,14 @@ def show_tasks_page_msg(topic, page, is_daily=0):
     tasks_on_page = all_tasks[start:end]
     msg = f"Список задач з теми «{topic}» (сторінка {page+1}/{(total-1)//TASKS_PER_PAGE+1}):\n\n"
     for t in tasks_on_page:
-        msg += f"ID: {t['id']}\nТема: {t['topic']}\nРівень: {t['level']}\nПитання: {t['question'][:30]}...\n\n"
+        tt = t.get('task_type') or '—'
+        msg += (
+            f"ID: {t['id']}\n"
+            f"Тема: {t['topic']}\n"
+            f"Рівень: {t['level']}\n"
+            f"Тип: {tt}\n"
+            f"Питання: {t['question'][:30]}...\n\n"
+        )
     return msg, len(all_tasks)
 
 def show_feedback_page_msg(feedbacks, page):
@@ -266,7 +275,7 @@ def show_feedback_page_msg(feedbacks, page):
     msg = f"Список звернень користувачів (сторінка {page+1}/{(total-1)//FEEDBACKS_PER_PAGE+1}):\n\n"
     for fb in page_feedbacks:
         # fb: (id, user_id, username, date, text)
-        msg += f"ID: {fb[0]}\nКористувач: @{fb[2]} (id:{fb[1]})\n{fb[4]}\n{fb[3]}\n\n"
+        msg += f"ID: {fb[0]}\nКористувач: @{fb[2]} (id:{fb[1]})\n{fb[3]}\n{fb[4]}\n\n"
     return msg, total
 
 from telegram import ReplyKeyboardRemove
@@ -305,21 +314,49 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         return True
 
     if state["step"] == "topic":
-        data["topic"] = text
+        data["topic"] = text.strip()
         state["step"] = "level"
         state["data"] = data
-        await update.message.reply_text("🟡 Введи рівень задачі (легкий/середній/важкий):", reply_markup=build_cancel_keyboard())
+        # показуємо кнопки з рівнями, щоб не було помилок набору
+        level_kb = [[KeyboardButton(l)] for l in LEVELS] + [[KeyboardButton("❌ Скасувати")]]
+        await update.message.reply_text(
+            "🟡 Оберіть рівень задачі:",
+            reply_markup=ReplyKeyboardMarkup(level_kb, resize_keyboard=True)
+        )
         return True
 
     elif state["step"] == "level":
-        if text not in LEVELS:
-            await update.message.reply_text("❌ Невірний рівень. Введи: легкий / середній / важкий", reply_markup=build_cancel_keyboard())
+        lvl = (text or "").strip().lower()
+        allowed = {l.lower(): l for l in LEVELS}
+        if lvl not in allowed:
+            level_kb = [[KeyboardButton(l)] for l in LEVELS] + [[KeyboardButton("❌ Скасувати")]]
+            await update.message.reply_text(
+                "❌ Невірний рівень. Оберіть один із варіантів:",
+                reply_markup=ReplyKeyboardMarkup(level_kb, resize_keyboard=True)
+            )
             return True
-        data["level"] = text
+        data["level"] = allowed[lvl]
+        state["step"] = "type"
+        state["data"] = data
+        await update.message.reply_text("🧩 Оберіть тип задачі:", reply_markup=build_type_keyboard())
+        return True
+
+
+    elif state["step"] == "type":
+        btn = (text or "").strip()
+        if btn not in TYPE_BUTTONS:
+            await update.message.reply_text(
+                "❌ Оберіть тип із кнопок нижче:",
+                reply_markup=build_type_keyboard()
+            )
+            return True
+        data["task_type"] = TYPE_BUTTONS[btn]
         state["step"] = "question"
         state["data"] = data
         await update.message.reply_text("🟢 Введи текст задачі:", reply_markup=build_cancel_keyboard())
         return True
+
+
 
     elif state["step"] == "question":
         data["question"] = text
@@ -494,11 +531,37 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
     if state.get("step") == "edit_level" and not state.get("is_daily"):
         task_id = state["task_id"]
         level = text.strip()
-        if level and level not in LEVELS and level != "Пропустити":
+        norm = (level or "").strip().lower()
+        allowed = {l.lower(): l for l in LEVELS}
+        if level and norm != "пропустити" and norm not in allowed:
             await update.message.reply_text("❌ Невірний рівень. Можливі: легкий / середній / важкий / Пропустити.")
             return True
-        if level and level != "Пропустити":
-            update_task_field(task_id, "level", level)
+        if level and norm != "пропустити":
+            update_task_field(task_id, "level", allowed[norm])
+
+        # ---> тепер питаємо тип
+        state["step"] = "edit_type"
+        task = get_task_by_id(task_id)
+        current_type = task.get("task_type") or "—"
+        await update.message.reply_text(
+            f"Поточний тип: {current_type}\n"
+            f"Оберіть новий тип або натисніть 'Пропустити':",
+            reply_markup=build_type_keyboard()
+        )
+        return True
+
+    
+    if state.get("step") == "edit_type":
+        task_id = state["task_id"]
+        if text != "Пропустити":
+            btn = (text or "").strip()
+            if btn not in TYPE_BUTTONS:
+                await update.message.reply_text(
+                    "❌ Оберіть тип із кнопок, або натисніть 'Пропустити'.",
+                    reply_markup=build_type_keyboard()
+                )
+                return True
+            update_task_field(task_id, "task_type", TYPE_BUTTONS[btn])
         state["step"] = "edit_answer"
         task = get_task_by_id(task_id)
         ans_str = ', '.join(task['answer'])
@@ -507,6 +570,7 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
             reply_markup=skip_cancel_keyboard()
         )
         return True
+
 
     # Крок 5: Відповідь
     if state.get("step") == "edit_answer":

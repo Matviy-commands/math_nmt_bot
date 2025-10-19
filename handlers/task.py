@@ -7,6 +7,8 @@ from handlers.daily import handle_daily_task
 from handlers.state import feedback_state, user_last_menu, solving_state, change_name_state
 from handlers.badges import show_badges
 from handlers.materials import MATERIALS
+from handlers.scoring import calc_points
+
 
 from handlers.utils import (
     build_main_menu,
@@ -28,7 +30,14 @@ from db import (
     add_feedback,
     get_available_levels_for_topic,
     get_all_topics_by_category,
+    get_completed_task_ids,
+    update_streak_and_reward,
+    get_user_completed_count,
+    get_topic_streak, set_topic_streak, inc_topic_streak, reset_topic_streak,
+    has_topic_streak_award, mark_topic_streak_award,
+
 )
+
 
 HELP_TEXT = """
 🆘 <b>Допомога та зв'язок</b>
@@ -127,26 +136,19 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             # --- визначаємо невиконані задачі
-            completed_ids = set([
-                t["id"] for t in level_tasks
-                if all_tasks_completed(user_id, topic, text)
-            ])
-            tasks = [t for t in level_tasks if t["id"] not in completed_ids]
-            if not tasks:
-                await update.message.reply_text(
-                    "🎉 Вітаю! Ти пройшов всі задачі цієї теми та рівня!",
-                    reply_markup=build_main_menu(user_id)
-                )
-                del start_task_state[user_id]
-                return
+            # --- беремо всі задачі рівня (ДОЗВОЛЯЄМО перепроходження)
+            completed_ids = set(get_completed_task_ids(user_id, topic, text))  # збережемо, щоб знати які вже виконані
+            tasks = level_tasks  # не фільтруємо
 
-            # --- зберігаємо стан проходження рівня
+            # --- зберігаємо стан проходження рівня (додаємо completed_ids)
             solving_state[user_id] = {
                 "topic": topic,
                 "level": text,
                 "task_ids": [t["id"] for t in tasks],
+                "completed_ids": completed_ids,   # <- важливо
                 "current": 0,
             }
+
             await send_next_task(update, context, user_id)
             del start_task_state[user_id]
             return
@@ -157,11 +159,27 @@ async def send_next_task(update, context, user_id):
     task_id = state["task_ids"][idx]
     from db import get_task_by_id
     task = get_task_by_id(task_id)
+    already_done = task_id in (solving_state[user_id].get("completed_ids") or set())
     state["current_task"] = task
     # Надіслати задачу (текст + фото)
     kb = ReplyKeyboardMarkup(
         [[KeyboardButton("↩️ Меню"), KeyboardButton("❓ Не знаю")]], resize_keyboard=True)
     task_text = f"📘 {task['topic']} ({task['level']})\n\n{task['question']}"
+
+        # необов'язково: показати поточну серію у темі
+    try:
+        cur_streak = get_topic_streak(user_id, state["topic"])
+        if cur_streak > 0:
+            task_text = f"🔥 Серія в темі: {cur_streak}\n\n" + task_text
+    except Exception:
+        pass
+
+
+    # ⬇️ якщо задача вже була виконана — покажемо плашку "повтор"
+    if already_done:
+        task_text = "🔁 (повтор, без нарахування балів)\n\n" + task_text
+
+
     if task.get("photo"):
         await update.message.reply_photo(
             task["photo"], caption=task_text, reply_markup=kb
@@ -186,23 +204,83 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         explanation = task["explanation"].strip() if task["explanation"] else "Пояснення відсутнє!"
 
-        # === Нова багатовідповідна перевірка ===
+        # === Перевірка відповіді + скоринг (єдиний блок) ===
         user_answers = [a.strip() for a in text.replace(';', ',').split(',') if a.strip()]
         correct_answers = [a.strip() for a in task["answer"]]
+        task_type = (task.get("task_type") or "").lower()
 
-        # Перевіряємо: всі відповіді мають співпадати, порядок НЕ важливий
-        is_correct = (
-            len(user_answers) == len(correct_answers) and
-            set(user_answers) == set(correct_answers)
-        )
+        if task_type == "match":
+            # часткові збіги — рахуємо; повна правильність, якщо вгадано всі
+            match_correct = len(set(user_answers) & set(correct_answers))
+            is_correct = (match_correct == len(correct_answers))
+        else:
+            # інші типи — повний збіг множин (порядок неважливий)
+            match_correct = 0
+            is_correct = (
+                len(user_answers) == len(correct_answers) and
+                set(user_answers) == set(correct_answers)
+            )
+
+        # чи це повторне проходження
+        already_done = task["id"] in (state.get("completed_ids") or set())
+
+        # на повторі бали не нараховуємо
+        if already_done:
+            delta = 0
+        else:
+            delta = calc_points(task, is_correct=is_correct, match_correct=match_correct)
+
+        if delta > 0:
+            add_score(user_id, delta)
 
         if is_correct:
-            add_score(user_id, 10)
-            msg = "✅ Правильно! +10 балів 🎉"
+            if already_done:
+                msg = "✅ Правильно! (повтор) Балів не нараховано."
+            else:
+                msg = f"✅ Правильно! +{delta} балів 🎉" if delta > 0 else "✅ Правильно!"
         else:
             msg = "❌ Неправильна відповідь.\n⚠️ Бали за цю задачу не нараховано."
+
+
         msg += f"\n📖 Пояснення: {explanation}"
         await update.message.reply_text(msg)
+
+        # --------------------------
+        # Серія правильних у межах теми (лише перші проходження)
+        topic = state["topic"]
+        TOPIC_STREAK_MILESTONES = {5: 5, 10: 10, 15: 25, 20: 40, 30: 60}
+
+        if not already_done:
+            if is_correct:
+                new_streak = inc_topic_streak(user_id, topic)
+                awarded_msgs = []
+                for m, bonus in TOPIC_STREAK_MILESTONES.items():
+                    if new_streak >= m and not has_topic_streak_award(user_id, topic, m):
+                        add_score(user_id, bonus)
+                        mark_topic_streak_award(user_id, topic, m)
+                        awarded_msgs.append(f"🏅 Серія {m} правильних у темі «{topic}»! +{bonus} балів")
+                if awarded_msgs:
+                    await update.message.reply_text("\n".join(awarded_msgs))
+            else:
+                # перша спроба на цю задачу неправильна -> скидаємо серію
+                reset_topic_streak(user_id, topic)
+        # якщо already_done == True (повтор), серію не чіпаємо
+        # --------------------------
+
+
+        # --- streak & бонуси за безперервні дні
+        streak, bonus = update_streak_and_reward(user_id)
+        if bonus > 0:
+            await update.message.reply_text(
+                f"🔥 Серія: {streak} дні(в) підряд! Бонус +{bonus} балів."
+            )
+        
+        # якщо це перша спроба на цю задачу — скидаємо серію у темі
+        already_done = task["id"] in (state.get("completed_ids") or set())
+        if not already_done:
+            reset_topic_streak(user_id, state["topic"])
+
+
         mark_task_completed(user_id, task["id"])
         state["current"] += 1
         if state["current"] < len(state["task_ids"]):
@@ -244,8 +322,30 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "Оберіть інший рівень або змініть тему, або поверніться в меню.",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
             )
-            solving_state.pop(user_id, None)
+            # --- Бонус за тему ≥70% (альтернатива без бейджа) ---
+            try:
+                # Порахувати прогрес по ВСІЙ темі (усі рівні)
+                all_tasks_in_topic = get_all_tasks_by_topic(topic)  # без is_daily => звичайні задачі
+                total_in_topic = len(all_tasks_in_topic)
 
+                # Скільки задач у темі виконано користувачем по всіх рівнях
+                completed_in_topic = sum(
+                    get_user_completed_count(user_id, topic, lvl)
+                    for lvl in {"легкий", "середній", "важкий"}
+                )
+
+                if total_in_topic > 0:
+                    percent = completed_in_topic / total_in_topic
+                    if percent >= 0.70:
+                        # Нарахуємо +20 балів (простий варіант, без блокування повторів)
+                        add_score(user_id, 20)
+                        await update.message.reply_text("🏆 Ти пройшов тему з результатом ≥70%! +20 балів 🎉")
+            except Exception as e:
+                # Безпечний fallback, щоб не ламати потік
+                # Можеш залогувати e, якщо потрібно
+                pass
+
+            solving_state.pop(user_id, None)
 
         return
 
@@ -257,6 +357,14 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"🤔 Обрано варіант 'Не знаю'.\n⚠️ Бали за цю задачу не нараховано.\n\n📖 Пояснення: {task['explanation'].strip() if task['explanation'] else 'Пояснення відсутнє!'}"
         )
+
+        # --- streak & бонуси за безперервні дні (рахуємо як активність)
+        streak, bonus = update_streak_and_reward(user_id)
+        if bonus > 0:
+            await update.message.reply_text(
+                f"🔥 Серія: {streak} дні(в) підряд! Бонус +{bonus} балів."
+            )
+
 
         mark_task_completed(user_id, task["id"])
         state["current"] += 1

@@ -4,6 +4,20 @@ admin_ids = [1070282751, 981761965, 622895283, 536875267, 799115167, 816846097, 
 CATEGORIES = ["Алгебра", "Геометрія"]
 LEVELS = ["легкий", "середній", "важкий"]
 
+TYPE_BUTTONS = {
+    "Тест (1 відповідь)": "single",
+    "Відповідності (часткові бали)": "match",
+    "Відкрита відповідь": "open",
+    "BOSS/«гробик»": "boss",
+    "Лайтове (0 балів)": "light",
+}
+
+def build_type_keyboard():
+    from telegram import ReplyKeyboardMarkup, KeyboardButton
+    rows = [[KeyboardButton(name)] for name in TYPE_BUTTONS.keys()]
+    rows.append([KeyboardButton("❌ Скасувати")])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
 def build_main_menu(user_id):
     keyboard = [
         [KeyboardButton("🧠 Почати задачу")],

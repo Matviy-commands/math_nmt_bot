@@ -8,7 +8,7 @@ from db import (
     get_user_field, get_level_by_score,
     get_all_topics, get_all_tasks_by_topic,
     get_user_completed_count, get_top_users, get_user_rank,
-    get_all_topics_by_category
+    get_all_topics_by_category, get_user_badges
 )
 
 
@@ -16,12 +16,22 @@ async def show_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     from handlers.state import user_last_menu
     user_last_menu[user_id] = "progress"
+
     score = get_user_field(user_id, "score") or 0
     level = get_level_by_score(score)
-    topics = get_all_topics()
-    msg = f"📊 <b>Мій рейтинг і прогрес</b>\n\n"
+
+    msg = "📊 <b>Мій рейтинг і прогрес</b>\n\n"
     msg += f"• <b>Кількість балів:</b> <code>{score}</code>\n"
     msg += f"• <b>Поточний рівень:</b> {level}\n\n"
+
+    streak = get_user_field(user_id, "streak_days") or 0
+    msg += f"• <b>Серія днів підряд:</b> {streak}\n\n"
+
+    opened = len(get_user_badges(user_id))
+    msg += f"• <b>Відкриті бейджі:</b> {opened}\n\n"
+
+
+
 
     msg += "<b>Прогрес по темах:</b>\n"
     for category in CATEGORIES:
