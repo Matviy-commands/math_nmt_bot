@@ -166,7 +166,7 @@ async def send_next_task(update, context, user_id):
         [[KeyboardButton("↩️ Меню"), KeyboardButton("❓ Не знаю")]], resize_keyboard=True)
     task_text = f"📘 {task['topic']} ({task['level']})\n\n{task['question']}"
 
-        # необов'язково: показати поточну серію у темі
+    # необов'язково: показати поточну серію у темі
     try:
         cur_streak = get_topic_streak(user_id, state["topic"])
         if cur_streak > 0:
@@ -174,11 +174,9 @@ async def send_next_task(update, context, user_id):
     except Exception:
         pass
 
-
     # ⬇️ якщо задача вже була виконана — покажемо плашку "повтор"
     if already_done:
         task_text = "🔁 (повтор, без нарахування балів)\n\n" + task_text
-
 
     if task.get("photo"):
         await update.message.reply_photo(
@@ -186,6 +184,7 @@ async def send_next_task(update, context, user_id):
         )
     else:
         await update.message.reply_text(task_text, reply_markup=kb)
+
 
 
 async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -246,26 +245,30 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(msg)
 
         # --------------------------
-        # Серія правильних у межах теми (лише перші проходження)
+        # Серія правильних у межах теми (рахуємо лише перші проходження)
         topic = state["topic"]
+        is_daily = state.get("is_daily", False)
         TOPIC_STREAK_MILESTONES = {5: 5, 10: 10, 15: 25, 20: 40, 30: 60}
 
-        if not already_done:
-            if is_correct:
+        if not is_daily:
+            if is_correct and not already_done:
                 new_streak = inc_topic_streak(user_id, topic)
                 awarded_msgs = []
-                for m, bonus in TOPIC_STREAK_MILESTONES.items():
+                for m in sorted(TOPIC_STREAK_MILESTONES):
+                    bonus = TOPIC_STREAK_MILESTONES[m]
                     if new_streak >= m and not has_topic_streak_award(user_id, topic, m):
                         add_score(user_id, bonus)
                         mark_topic_streak_award(user_id, topic, m)
                         awarded_msgs.append(f"🏅 Серія {m} правильних у темі «{topic}»! +{bonus} балів")
+
                 if awarded_msgs:
                     await update.message.reply_text("\n".join(awarded_msgs))
-            else:
-                # перша спроба на цю задачу неправильна -> скидаємо серію
+            elif not is_correct:
+                # будь-яка помилка розриває серію
                 reset_topic_streak(user_id, topic)
         # якщо already_done == True (повтор), серію не чіпаємо
         # --------------------------
+
 
 
         # --- streak & бонуси за безперервні дні
@@ -275,11 +278,6 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"🔥 Серія: {streak} дні(в) підряд! Бонус +{bonus} балів."
             )
         
-        # якщо це перша спроба на цю задачу — скидаємо серію у темі
-        already_done = task["id"] in (state.get("completed_ids") or set())
-        if not already_done:
-            reset_topic_streak(user_id, state["topic"])
-
 
         mark_task_completed(user_id, task["id"])
         state["current"] += 1
@@ -364,6 +362,14 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"🔥 Серія: {streak} дні(в) підряд! Бонус +{bonus} балів."
             )
+
+        try:
+            topic = state["topic"]
+            is_daily = state.get("is_daily", False)
+            if not is_daily:
+                reset_topic_streak(user_id, topic)
+        except Exception:
+            pass
 
 
         mark_task_completed(user_id, task["id"])
