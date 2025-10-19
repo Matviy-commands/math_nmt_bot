@@ -1,0 +1,22 @@
+name: Deploy to EC2 via SSH
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH to EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}       # ec2-98-82-189-129.compute-1.amazonaws.com
+          username: ${{ secrets.EC2_USER }}   # ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}     # вміст PEM-файла
+          script: |
+            cd /home/ubuntu/math_nmt_bot
+            git fetch origin main
+            git reset --hard origin/main
+            sudo docker compose --env-file .env up -d --build
+            sudo docker image prune -f
