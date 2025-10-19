@@ -1,0 +1,6 @@
+services:
+  nmt-bot:
+    build: .
+    container_name: nmt-bot
+    restart: always
+    env_file: .env
