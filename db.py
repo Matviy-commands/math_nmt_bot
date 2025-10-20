@@ -160,44 +160,33 @@ def get_level_by_score(score):
 # -----------------------------
 # Tasks
 # -----------------------------
-def get_random_task(topic=None, level=None, user_id=None):
+def get_random_task(topic=None, level=None, user_id=None, is_daily=None):
     with connect() as con:
         cur = con.cursor()
-        base = """
-            SELECT t.id, t.category, t.topic, t.level, t.task_type, t.question,
-                   t.answer, t.explanation, t.photo, t.is_daily
-            FROM tasks t
-            {anti}
+        query = """
+            SELECT id, category, topic, level, task_type, question, answer, explanation, photo, is_daily
+            FROM tasks
             WHERE 1=1
         """
         params = []
-        anti = ""
-        if user_id:
-            anti = "LEFT JOIN completed_tasks c ON c.task_id = t.id AND c.user_id = %s"
-            params.append(user_id)
-        q = base.format(anti=anti)
         if topic:
-            q += " AND t.topic = %s"; params.append(topic)
+            query += " AND topic = %s"; params.append(topic)
         if level:
-            q += " AND t.level = %s"; params.append(level)
+            query += " AND level = %s"; params.append(level)
+        if is_daily is not None:
+            query += " AND is_daily = %s"; params.append(int(is_daily))
         if user_id:
-            q += " AND c.task_id IS NULL"
-        q += " ORDER BY RANDOM() LIMIT 1"
+            query += " AND id NOT IN (SELECT task_id FROM completed_tasks WHERE user_id = %s)"
+            params.append(user_id)
 
-        cur.execute(q, tuple(params))
+        query += " ORDER BY RANDOM() LIMIT 1"
+        cur.execute(query, tuple(params))
         row = cur.fetchone()
         if row:
             return {
-                "id": row[0],
-                "category": row[1],
-                "topic": row[2],
-                "level": row[3],
-                "task_type": row[4],
-                "question": row[5],
-                "answer": json.loads(row[6]),
-                "explanation": row[7],
-                "photo": row[8],
-                "is_daily": row[9],
+                "id": row[0], "category": row[1], "topic": row[2], "level": row[3],
+                "task_type": row[4], "question": row[5], "answer": json.loads(row[6]),
+                "explanation": row[7], "photo": row[8], "is_daily": row[9],
             }
     return None
 
