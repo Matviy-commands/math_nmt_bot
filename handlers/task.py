@@ -244,6 +244,38 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         msg += f"\n📖 Пояснення: {explanation}"
         await update.message.reply_text(msg)
 
+        # --- Бонус за тему ≥70% (лише перші проходження, одразу після відповіді) ---
+        try:
+            topic = state["topic"]
+            is_daily = state.get("is_daily", False)
+
+            # тільки якщо НЕ daily, відповідь правильна і це НЕ повтор
+            if (not is_daily) and is_correct and not already_done:
+                # скільки задач у темі всього (звичайні, не daily)
+                total_in_topic = len(get_all_tasks_by_topic(topic))
+
+                # виконано користувачем по всіх рівнях ДО цієї задачі
+                completed_in_topic = sum(
+                    get_user_completed_count(user_id, topic, lvl)
+                    for lvl in {"легкий", "середній", "важкий"}
+                )
+
+                # врахуємо поточну правильну першу спробу
+                completed_after = completed_in_topic + 1
+
+                if total_in_topic > 0:
+                    percent_after = completed_after / total_in_topic
+
+                    # milestone 70 у таблиці user_topic_streak_awards = "тему пройдено на ≥70%"
+                    if percent_after >= 0.70 and not has_topic_streak_award(user_id, topic, 70):
+                        add_score(user_id, 20)
+                        mark_topic_streak_award(user_id, topic, 70)
+                        await update.message.reply_text("🏆 Ти пройшов тему з результатом ≥70%! +20 балів 🎉")
+        except Exception:
+            pass
+        # --- кінець блоку бонусу ≥70% ---
+
+
         # --------------------------
         # Серія правильних у межах теми (рахуємо лише перші проходження)
         topic = state["topic"]
@@ -320,28 +352,6 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "Оберіть інший рівень або змініть тему, або поверніться в меню.",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
             )
-            # --- Бонус за тему ≥70% (альтернатива без бейджа) ---
-            try:
-                # Порахувати прогрес по ВСІЙ темі (усі рівні)
-                all_tasks_in_topic = get_all_tasks_by_topic(topic)  # без is_daily => звичайні задачі
-                total_in_topic = len(all_tasks_in_topic)
-
-                # Скільки задач у темі виконано користувачем по всіх рівнях
-                completed_in_topic = sum(
-                    get_user_completed_count(user_id, topic, lvl)
-                    for lvl in {"легкий", "середній", "важкий"}
-                )
-
-                if total_in_topic > 0:
-                    percent = completed_in_topic / total_in_topic
-                    if percent >= 0.70:
-                        # Нарахуємо +20 балів (простий варіант, без блокування повторів)
-                        add_score(user_id, 20)
-                        await update.message.reply_text("🏆 Ти пройшов тему з результатом ≥70%! +20 балів 🎉")
-            except Exception as e:
-                # Безпечний fallback, щоб не ламати потік
-                # Можеш залогувати e, якщо потрібно
-                pass
 
             solving_state.pop(user_id, None)
 
