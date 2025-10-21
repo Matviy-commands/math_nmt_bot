@@ -1,8 +1,8 @@
 import os
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
-load_dotenv()
+# load_dotenv()
 
 from handlers.start import start_handler
 from handlers.state import admin_menu_state
