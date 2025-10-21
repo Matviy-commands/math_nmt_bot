@@ -1,4 +1,3 @@
-# utils.py
 from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 
 admin_ids = [1070282751, 981761965, 622895283, 536875267, 799115167, 816846097, 542897073, 1008277167]
@@ -16,9 +15,6 @@ TYPE_BUTTONS = {
 # --------- helpers
 
 def _grid(button_texts, cols=2, extra_rows=None):
-    """
-    Розкладає тексти кнопок у сітку cols×N. extra_rows — додаткові повні ряди (список списків).
-    """
     buttons = [KeyboardButton(t) for t in button_texts]
     rows = [buttons[i:i+cols] for i in range(0, len(buttons), cols)]
     if extra_rows:

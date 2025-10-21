@@ -2,14 +2,21 @@ import os
 import psycopg2
 import json
 from datetime import date, timedelta
+from psycopg2 import pool  # 1. Імпортуємо пул
+import contextlib          # 2. Імпортуємо contextlib
 # from dotenv import load_dotenv
 # load_dotenv()
 
 # -----------------------------
-# Connection
+# Connection Pool
 # -----------------------------
-def connect():
-    return psycopg2.connect(
+
+# 3. Створюємо пул ОДИН РАЗ при старті бота
+#    Він буде жити, доки працює бот.
+try:
+    db_pool = psycopg2.pool.SimpleConnectionPool(
+        minconn=1,  # мінімум 1 з'єднання тримати відкритим
+        maxconn=10, # максимум 10 з'єднань
         dbname=os.getenv("PG_DBNAME"),
         user=os.getenv("PG_USER"),
         password=os.getenv("PG_PASSWORD"),
@@ -17,11 +24,38 @@ def connect():
         port=os.getenv("PG_PORT"),
         sslmode="require",
     )
+    print("✅ Пул з'єднань з PostgreSQL успішно створено.")
+except Exception as e:
+    print(f"❌ ПОМИЛКА: Не вдалося створити пул з'єднань: {e}")
+    db_pool = None
+
+# 4. Оновлюємо функцію 'connect', щоб вона брала з'єднання з пулу.
+#    @contextlib.contextmanager дозволяє нам зберегти синтаксис 'with ...'
+@contextlib.contextmanager
+def connect():
+    if db_pool is None:
+        raise Exception("Пул з'єднань не ініціалізовано!")
+        
+    con = None
+    try:
+        con = db_pool.getconn() # <-- Беремо готове з'єднання з пулу
+        yield con
+        con.commit() # <-- Commit, якщо 'with' пройшов без помилок
+    except Exception:
+        if con:
+            con.rollback() # <-- Відкат, якщо була помилка
+        raise
+    finally:
+        if con:
+            db_pool.putconn(con) # <-- Завжди повертаємо з'єднання в пул
 
 # -----------------------------
 # Schema init (safe idempotent)
 # -----------------------------
 def init_db():
+    # Ця функція використовує твій SQL-скрипт.
+    # Я прибрав ALTER TABLE, бо твій CREATE TABLE вже містить ці поля.
+    # Також я оновив індекси, щоб вони відповідали твоїм.
     with connect() as con:
         cur = con.cursor()
 
@@ -37,7 +71,9 @@ def init_db():
                 feedbacks INTEGER DEFAULT 0,
                 all_tasks_completed INTEGER DEFAULT 0,
                 topics_total INTEGER DEFAULT 0,
-                topics_completed INTEGER DEFAULT 0
+                topics_completed INTEGER DEFAULT 0,
+                last_activity DATE,
+                streak_days INTEGER DEFAULT 0
             )
         """)
         cur.execute("""
@@ -56,15 +92,15 @@ def init_db():
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS completed_tasks (
-                user_id BIGINT NOT NULL,
-                task_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
                 PRIMARY KEY (user_id, task_id)
             )
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS feedback (
                 id SERIAL PRIMARY KEY,
-                user_id BIGINT,
+                user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
                 username TEXT,
                 message TEXT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -72,14 +108,14 @@ def init_db():
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS badges (
-                user_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 badge TEXT NOT NULL,
                 PRIMARY KEY (user_id, badge)
             )
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_topic_streaks (
-                user_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 topic   TEXT    NOT NULL,
                 streak  INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, topic)
@@ -87,31 +123,33 @@ def init_db():
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_topic_streak_awards (
-                user_id   BIGINT  NOT NULL,
+                user_id   BIGINT  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 topic     TEXT    NOT NULL,
                 milestone INTEGER NOT NULL,
                 PRIMARY KEY (user_id, topic, milestone)
             )
         """)
 
-        # 2) додаткові поля в users (якщо ще не створені)
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_activity DATE")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_days INTEGER DEFAULT 0")
-
-        # 3) індекси
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_topic_level_daily ON tasks (topic, level, is_daily)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_is_daily ON tasks (is_daily)")
+        # 3) індекси (з твого скрипту)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_topic_daily ON tasks (topic, is_daily)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_topic_level ON tasks (topic, level)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_category ON tasks (category)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_user_time ON feedback (user_id, timestamp DESC)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_completed_user ON completed_tasks (user_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_completed_task ON completed_tasks (task_id)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_user_time ON feedback (user_id, timestamp)")
+        
+        # Старі індекси (на випадок, якщо вони ще десь використовуються, але твої нові кращі)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_is_daily ON tasks (is_daily)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_streaks_user_topic ON user_topic_streaks (user_id, topic)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_streak_awards_user_topic ON user_topic_streak_awards (user_id, topic)")
 
         con.commit()
+    print("✅ Схема бази даних ініціалізована.")
+
 
 # -----------------------------
 # Users
+# (Всі ці функції тепер АВТОМАТИЧНО використовують пул з'єднань)
 # -----------------------------
 def get_user(user_id):
     with connect() as con:
@@ -199,7 +237,7 @@ def add_task(data):
         """, (
             category,
             data["topic"],
-            data.get("level") or "",      # для daily можна "" як зараз
+            data.get("level") or "",      # для daily можна ""
             data.get("task_type"),
             data["question"],
             json.dumps(data["answer"]),
