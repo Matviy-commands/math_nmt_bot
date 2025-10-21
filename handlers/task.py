@@ -301,9 +301,10 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             is_daily = state.get("is_daily", False)
             if is_daily:
                 if is_correct:
-                    add_score(user_id, 5)
+                    # add_score(user_id, 5)
                     await update.message.reply_text(
-                        "🎉 Вітаю! Щоденну задачу виконано! +5 бонусних балів.",
+                        "🎉 Вітаю! Щоденну задачу виконано!",
+                        # "🎉 Вітаю! Щоденну задачу виконано! +5 бонусних балів.",
                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
                     )
                 else:
@@ -319,10 +320,12 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             is_daily = state.get("is_daily", False)
             if is_daily:
                 if is_correct:
-                    add_score(user_id, 5)
+                    # add_score(user_id, 5)
                     await update.message.reply_text(
-                        "🎉 Готово! Щоденна задача на сьогодні виконана. +5 бонусних балів.\n"
+                        "🎉 Готово! Щоденна задача на сьогодні виконана.\n"
                         "Повернись завтра по нову 💪",
+                        # "🎉 Готово! Щоденна задача на сьогодні виконана. +5 бонусних балів.\n"
+                        # "Повернись завтра по нову 💪",
                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
                     )
                 else:
