@@ -4,16 +4,16 @@ from telegram.constants import ParseMode
 
 from handlers.progress import show_progress, show_rating
 from handlers.daily import handle_daily_task
-from handlers.state import feedback_state, user_last_menu, solving_state, change_name_state
 from handlers.badges import show_badges
 from handlers.materials import MATERIALS
 from handlers.scoring import calc_points
-
+from db import update_streak_and_reward, update_user
 
 from handlers.utils import (
     build_main_menu,
     build_category_keyboard,
     build_back_to_menu_keyboard,
+    build_topics_keyboard,
     CATEGORIES,               
     LEVELS,
 )
@@ -35,7 +35,6 @@ from db import (
     get_user_completed_count,
     get_topic_streak, set_topic_streak, inc_topic_streak, reset_topic_streak,
     has_topic_streak_award, mark_topic_streak_award,
-
 )
 
 
@@ -53,8 +52,6 @@ HELP_TEXT = """
 Пиши розробнику через кнопку нижче!
 """
 
-start_task_state = {}
-
 def build_task_keyboard():
     return ReplyKeyboardMarkup([[KeyboardButton("❓ Не знаю")]], resize_keyboard=True)
 
@@ -63,22 +60,21 @@ def build_level_keyboard(levels):
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 async def task_entrypoint(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     topics = get_all_topics()
     if not topics:
         await update.message.reply_text("❌ Зараз у базі немає жодної теми із задачами.")
         return
-    await update.message.reply_text("Оберіть тему:", reply_markup=build_topic_keyboard())
-    start_task_state[user_id] = {"step": "topic"}
+    # <-- ВИПРАВЛЕНО: 'build_topics_keyboard' і додано "Назад"
+    await update.message.reply_text("Оберіть тему:", reply_markup=build_topics_keyboard(topics + ["↩️ Назад"]))
+    context.user_data['start_task_state'] = {"step": "topic"}
 
 async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
 
-    if user_id in start_task_state:
-        state = start_task_state[user_id]
+    if 'start_task_state' in context.user_data:
+        state = context.user_data['start_task_state']
 
-        # вибір категорії
         if state["step"] == "category" and text in CATEGORIES:
             state["category"] = text
             from db import get_all_topics_by_category
@@ -91,10 +87,10 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             state["step"] = "topic"
-            await update.message.reply_text("Оберіть тему:", reply_markup=build_topic_keyboard(topics))
+             # <-- ВИПРАВЛЕНО: 'build_topics_keyboard' і додано "Назад"
+            await update.message.reply_text("Оберіть тему:", reply_markup=build_topics_keyboard(topics + ["↩️ Назад"]))
             return
         
-        # якщо натиснули назад -> повертаємось на вибір категорії
         if state["step"] == "topic" and text == "↩️ Назад":
             state["step"] = "category"
             await update.message.reply_text(
@@ -103,14 +99,12 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-
-        # вибір теми
-        topics = get_all_topics()  # або фільтруй по категорії, якщо треба
+        topics = get_all_topics()
         if state["step"] == "topic" and text in topics:
             available_levels = set([t["level"] for t in get_all_tasks_by_topic(text)])
             if not available_levels:
                 await update.message.reply_text("❌ Для цієї теми немає жодної задачі.")
-                del start_task_state[user_id]
+                context.user_data.pop('start_task_state', None)
                 return
             update_user(user_id, "topic", text)
             state["step"] = "level"
@@ -123,50 +117,65 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif state["step"] == "level" and text in LEVELS:
             topic = get_user_field(user_id, "topic")
-            # --- отримуємо всі задачі цієї теми
             all_tasks = get_all_tasks_by_topic(topic)
-            # --- фільтруємо задачі саме цього рівня
             level_tasks = [t for t in all_tasks if t["level"] == text]
             if not level_tasks:
                 await update.message.reply_text(
                     f"❌ Для рівня «{text}» задач немає!",
                     reply_markup=build_main_menu(user_id)
                 )
-                del start_task_state[user_id]
+                context.user_data.pop('start_task_state', None)
                 return
 
-            # --- визначаємо невиконані задачі
-            # --- беремо всі задачі рівня (ДОЗВОЛЯЄМО перепроходження)
-            completed_ids = set(get_completed_task_ids(user_id, topic, text))  # збережемо, щоб знати які вже виконані
-            tasks = level_tasks  # не фільтруємо
+            completed_ids = set(get_completed_task_ids(user_id, topic, text))
+            
+            uncompleted_tasks = [t for t in level_tasks if t["id"] not in completed_ids]
 
-            # --- зберігаємо стан проходження рівня (додаємо completed_ids)
-            solving_state[user_id] = {
+            tasks_to_solve = []
+            reply_text = ""
+
+            if uncompleted_tasks:
+                tasks_to_solve = uncompleted_tasks
+                reply_text = f"✅ Тема: {topic} ({text}). Починаємо! Задач у черзі: {len(tasks_to_solve)}"
+            else:
+                tasks_to_solve = level_tasks
+                reply_text = f"👍 Ти вже все вирішив у цій темі! Запускаю повторне коло (без балів)."
+
+            if not tasks_to_solve:
+                await update.message.reply_text(
+                    f"❌ Для рівня «{text}» дивним чином не знайшлось задач.",
+                    reply_markup=build_main_menu(user_id)
+                )
+                context.user_data.pop('start_task_state', None)
+                return
+
+            await update.message.reply_text(reply_text) 
+
+            context.user_data['solving_state'] = {
                 "topic": topic,
                 "level": text,
-                "task_ids": [t["id"] for t in tasks],
-                "completed_ids": completed_ids,   # <- важливо
+                "task_ids": [t["id"] for t in tasks_to_solve],
+                "completed_ids": completed_ids,
                 "current": 0,
             }
 
             await send_next_task(update, context, user_id)
-            del start_task_state[user_id]
+            context.user_data.pop('start_task_state', None)
             return
 
 async def send_next_task(update, context, user_id):
-    state = solving_state[user_id]
+    state = context.user_data['solving_state']
     idx = state["current"]
     task_id = state["task_ids"][idx]
     from db import get_task_by_id
     task = get_task_by_id(task_id)
-    already_done = task_id in (solving_state[user_id].get("completed_ids") or set())
+    already_done = task_id in (state.get("completed_ids") or set())
     state["current_task"] = task
-    # Надіслати задачу (текст + фото)
+    
     kb = ReplyKeyboardMarkup(
         [[KeyboardButton("↩️ Меню"), KeyboardButton("❓ Не знаю")]], resize_keyboard=True)
     task_text = f"📘 {task['topic']} ({task['level']})\n\n{task['question']}"
 
-    # необов'язково: показати поточну серію у темі
     try:
         cur_streak = get_topic_streak(user_id, state["topic"])
         if cur_streak > 0:
@@ -174,7 +183,6 @@ async def send_next_task(update, context, user_id):
     except Exception:
         pass
 
-    # ⬇️ якщо задача вже була виконана — покажемо плашку "повтор"
     if already_done:
         task_text = "🔁 (повтор, без нарахування балів)\n\n" + task_text
 
@@ -191,11 +199,11 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = update.effective_user.id
     text = update.message.text
 
-    if user_id in solving_state:
-        state = solving_state[user_id]
+    if 'solving_state' in context.user_data:
+        state = context.user_data['solving_state']
         task = state.get("current_task")
         if text == "↩️ Меню":
-            solving_state.pop(user_id, None)
+            context.user_data.pop('solving_state', None)
             await update.message.reply_text(
                 "📍 Головне меню:",
                 reply_markup=build_main_menu(user_id)
@@ -203,27 +211,22 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         explanation = task["explanation"].strip() if task["explanation"] else "Пояснення відсутнє!"
 
-        # === Перевірка відповіді + скоринг (єдиний блок) ===
         user_answers = [a.strip() for a in text.replace(';', ',').split(',') if a.strip()]
         correct_answers = [a.strip() for a in task["answer"]]
         task_type = (task.get("task_type") or "").lower()
 
         if task_type == "match":
-            # часткові збіги — рахуємо; повна правильність, якщо вгадано всі
             match_correct = len(set(user_answers) & set(correct_answers))
             is_correct = (match_correct == len(correct_answers))
         else:
-            # інші типи — повний збіг множин (порядок неважливий)
             match_correct = 0
             is_correct = (
                 len(user_answers) == len(correct_answers) and
                 set(user_answers) == set(correct_answers)
             )
 
-        # чи це повторне проходження
         already_done = task["id"] in (state.get("completed_ids") or set())
 
-        # на повторі бали не нараховуємо
         if already_done:
             delta = 0
         else:
@@ -244,40 +247,27 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         msg += f"\n📖 Пояснення: {explanation}"
         await update.message.reply_text(msg)
 
-        # --- Бонус за тему ≥70% (лише перші проходження, одразу після відповіді) ---
         try:
             topic = state["topic"]
             is_daily = state.get("is_daily", False)
 
-            # тільки якщо НЕ daily, відповідь правильна і це НЕ повтор
             if (not is_daily) and is_correct and not already_done:
-                # скільки задач у темі всього (звичайні, не daily)
                 total_in_topic = len(get_all_tasks_by_topic(topic))
-
-                # виконано користувачем по всіх рівнях ДО цієї задачі
                 completed_in_topic = sum(
                     get_user_completed_count(user_id, topic, lvl)
                     for lvl in {"легкий", "середній", "важкий"}
                 )
-
-                # врахуємо поточну правильну першу спробу
                 completed_after = completed_in_topic + 1
 
                 if total_in_topic > 0:
                     percent_after = completed_after / total_in_topic
-
-                    # milestone 70 у таблиці user_topic_streak_awards = "тему пройдено на ≥70%"
                     if percent_after >= 0.70 and not has_topic_streak_award(user_id, topic, 70):
                         add_score(user_id, 20)
                         mark_topic_streak_award(user_id, topic, 70)
                         await update.message.reply_text("🏆 Ти пройшов тему з результатом ≥70%! +20 балів 🎉")
         except Exception:
             pass
-        # --- кінець блоку бонусу ≥70% ---
-
-
-        # --------------------------
-        # Серія правильних у межах теми (рахуємо лише перші проходження)
+        
         topic = state["topic"]
         is_daily = state.get("is_daily", False)
         TOPIC_STREAK_MILESTONES = {5: 5, 10: 10, 15: 25, 20: 40, 30: 60}
@@ -296,14 +286,8 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if awarded_msgs:
                     await update.message.reply_text("\n".join(awarded_msgs))
             elif not is_correct:
-                # будь-яка помилка розриває серію
                 reset_topic_streak(user_id, topic)
-        # якщо already_done == True (повтор), серію не чіпаємо
-        # --------------------------
-
-
-
-        # --- streak & бонуси за безперервні дні
+        
         streak, bonus = update_streak_and_reward(user_id)
         if bonus > 0:
             await update.message.reply_text(
@@ -316,27 +300,40 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if state["current"] < len(state["task_ids"]):
             is_daily = state.get("is_daily", False)
             if is_daily:
-                await update.message.reply_text(
-                    "🎉 Вітаю! Ви виконали щоденну задачу!",
-                    reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
-                )
-                solving_state.pop(user_id, None)
+                if is_correct:
+                    add_score(user_id, 5)
+                    await update.message.reply_text(
+                        "🎉 Вітаю! Щоденну задачу виконано! +5 бонусних балів.",
+                        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
+                    )
+                else:
+                    await update.message.reply_text(
+                        "✅ Щоденна задача зарахована. Бали не нараховано, але серію днів продовжено!",
+                        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
+                    )
+                context.user_data.pop('solving_state', None)
                 return
 
             await send_next_task(update, context, user_id)
         else:
-            # кінець списку задач
             is_daily = state.get("is_daily", False)
             if is_daily:
-                await update.message.reply_text(
-                    "🎉 Готово! Щоденна задача на сьогодні виконана.\n"
-                    "Повернись завтра по нову 💪",
-                    reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
-                )
-                solving_state.pop(user_id, None)
+                if is_correct:
+                    add_score(user_id, 5)
+                    await update.message.reply_text(
+                        "🎉 Готово! Щоденна задача на сьогодні виконана. +5 бонусних балів.\n"
+                        "Повернись завтра по нову 💪",
+                        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
+                    )
+                else:
+                     await update.message.reply_text(
+                        "✅ Готово! Щоденна задача на сьогодні виконана. Бали не нараховано.\n"
+                        "Повернись завтра по нову 💪",
+                        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
+                    )
+                context.user_data.pop('solving_state', None)
                 return
 
-            # --- звичайні (не daily) задачі: показуємо стандартне завершення рівня ---
             topic = state["topic"]
             current_level = state["level"]
             available_levels = get_available_levels_for_topic(topic, exclude_level=current_level)
@@ -353,20 +350,19 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
             )
 
-            solving_state.pop(user_id, None)
+            context.user_data.pop('solving_state', None)
 
         return
 
 async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id in solving_state:
-        state = solving_state[user_id]
+    if 'solving_state' in context.user_data:
+        state = context.user_data['solving_state']
         task = state.get("current_task")
         await update.message.reply_text(
             f"🤔 Обрано варіант 'Не знаю'.\n⚠️ Бали за цю задачу не нараховано.\n\n📖 Пояснення: {task['explanation'].strip() if task['explanation'] else 'Пояснення відсутнє!'}"
         )
 
-        # --- streak & бонуси за безперервні дні (рахуємо як активність)
         streak, bonus = update_streak_and_reward(user_id)
         if bonus > 0:
             await update.message.reply_text(
@@ -388,14 +384,14 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_daily = state.get("is_daily", False)
             if is_daily:
                 await update.message.reply_text(
-                    "🎉 Вітаю! Ви виконали щоденну задачу!",
+                    "🎯 Щоденна задача завершена.\n"
+                    "⚠️ За цю задачу бали не нараховано.",
                     reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
                 )
-                solving_state.pop(user_id, None)
+                context.user_data.pop('solving_state', None)
                 return
             await send_next_task(update, context, user_id)
         else:
-            # кінець списку задач
             is_daily = state.get("is_daily", False)
             if is_daily:
                 await update.message.reply_text(
@@ -403,10 +399,9 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "⚠️ За цю задачу бали не нараховано.",
                     reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
                 )
-                solving_state.pop(user_id, None)
+                context.user_data.pop('solving_state', None)
                 return
 
-            # --- звичайні (не daily) задачі: стандартне завершення рівня ---
             topic = state["topic"]
             current_level = state["level"]
             available_levels = get_available_levels_for_topic(topic, exclude_level=current_level)
@@ -422,8 +417,7 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Оберіть інший рівень або змініть тему, або поверніться в меню.",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
             )
-            solving_state.pop(user_id, None)
-
+            context.user_data.pop('solving_state', None)
 
         return
 
@@ -438,21 +432,21 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if text == "🧠 Почати задачу":
         await update.message.reply_text("Оберіть категорію:", reply_markup=build_category_keyboard())
-        start_task_state[user_id] = {"step": "category"}
+        context.user_data['start_task_state'] = {"step": "category"}
         return
 
 
     if text == "✏️ Змінити імʼя в рейтингу":
-        change_name_state[user_id] = True
+        context.user_data['change_name_state'] = True
         await update.message.reply_text(
             "Введіть нове імʼя (2-20 символів):",
             reply_markup=ReplyKeyboardMarkup([[KeyboardButton("❌ Скасувати")]], resize_keyboard=True)
         )
         return
 
-    if change_name_state.get(user_id):
+    if context.user_data.get('change_name_state'):
         if text == "❌ Скасувати":
-            del change_name_state[user_id]
+            context.user_data.pop('change_name_state', None)
             await update.message.reply_text(
                 "Скасовано. Ви у головному меню.",
                 reply_markup=build_main_menu(user_id)
@@ -463,25 +457,13 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("Імʼя повинно бути від 2 до 20 символів. Спробуйте ще раз:")
             return
         update_user(user_id, "display_name", new_name)
-        del change_name_state[user_id]
+        context.user_data.pop('change_name_state', None)
         await update.message.reply_text(
             f"✅ Ваше імʼя в рейтингу оновлено: <b>{new_name}</b>",
             parse_mode="HTML"
         )
-        # Одразу показуємо рейтинг
         await show_rating(update, context)
         return
-
-    # if text == "📚 Матеріали":
-    #     msg = "<b>Матеріали для підготовки до НМТ:</b>\n\n"
-    #     for m in MATERIALS:
-    #         msg += f"🔗 <a href='{m['url']}'>{m['title']}</a>\n"
-    #     await update.message.reply_text(
-    #         msg,
-    #         parse_mode="HTML",
-    #         disable_web_page_preview=False
-    #     )
-    #     return
 
     if text == "📚 Матеріали":
         buttons = [
@@ -493,17 +475,17 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    if text in LEVELS and user_id not in start_task_state:
-        # Хоче пройти інший рівень — запускаємо збереження стану та handle_task_step
-        start_task_state[user_id] = {"step": "level"}
+    if text in LEVELS and 'start_task_state' not in context.user_data:
+        context.user_data['start_task_state'] = {"step": "level"}
         await handle_task_step(update, context)
         return
+    
     if text == "Змінити тему":
         await task_entrypoint(update, context)
         return
     
     if text == "↩️ Меню":
-        solving_state.pop(user_id, None)  # На всякий випадок очищуємо стан
+        context.user_data.pop('solving_state', None)
         await update.message.reply_text(
             "📍 Головне меню:",
             reply_markup=build_main_menu(user_id)
@@ -512,10 +494,10 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
     if text == "↩️ Назад":
-        last_menu = user_last_menu.get(user_id)
+        last_menu = context.user_data.get('user_last_menu')
         if last_menu in ("badges", "rating"):
             await show_progress(update, context)
-            user_last_menu[user_id] = "progress"  # повертаємось до прогресу
+            context.user_data['user_last_menu'] = "progress"
         else:
             await update.message.reply_text(
                 "📍 Головне меню:",
@@ -535,16 +517,6 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await show_rating(update, context)
         return
 
-
-    if text == "↩️ Назад":
-        await update.message.reply_text(
-            "📍 Головне меню:",
-            reply_markup=build_main_menu(user_id)
-        )
-        return
-
-
-    # --- 1. Допомога та FAQ ---
     if text == "❓ Допомога / Зв’язок":
         keyboard = ReplyKeyboardMarkup(
             [[KeyboardButton("💬 Написати розробнику")], [KeyboardButton("↩️ Назад")]],
@@ -558,96 +530,57 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    # --- 2. Користувач натиснув "Написати розробнику" ---
     if text == "💬 Написати розробнику":
-        feedback_state[user_id] = True
+        context.user_data['feedback_state'] = True
         await update.message.reply_text(
             "✉️ Напишіть ваше звернення чи питання. Ми отримаємо його в адмінці.\n\nЩоб скасувати — натисніть ❌ Скасувати.",
             reply_markup=ReplyKeyboardMarkup([[KeyboardButton("❌ Скасувати")]], resize_keyboard=True)
         )
         return
 
-    # --- 3. Якщо користувач у стані написання звернення ---
-    if user_id in feedback_state:
+    if 'feedback_state' in context.user_data:
         if text == "❌ Скасувати":
-            del feedback_state[user_id]
+            context.user_data.pop('feedback_state', None)
             await update.message.reply_text(
                 "Скасовано. Ви у головному меню.",
                 reply_markup=build_main_menu(user_id)
             )
             return
         add_feedback(user_id, username, text)
-        del feedback_state[user_id]
+        context.user_data.pop('feedback_state', None)
         await update.message.reply_text(
             "✅ Ваше повідомлення відправлено адміністратору!",
             reply_markup=build_main_menu(user_id)
         )
         return
 
-    if text == "🧠 Почати задачу":
-        await task_entrypoint(update, context)
-        return
-
-    if text == "📊 Мій прогрес":
-        await show_progress(update, context)
-        return
-
-    if user_id in start_task_state:
-        await handle_task_step(update, context)
-        return
-
-    if text == "❓ Не знаю" and user_id in solving_state:
-        await handle_dont_know(update, context)
-        return
-
-    if user_id in solving_state:
-        await handle_task_answer(update, context)
-        return
-
-
     if text == "🔁 Щоденна задача":
         await handle_daily_task(update, context)
         return
 
-    if text == "❓ Допомога / Зв’язок":
-        # FAQ + кнопка для зв’язку
-        keyboard = ReplyKeyboardMarkup(
-            [[KeyboardButton("💬 Написати розробнику")], [KeyboardButton("↩️ Назад")]],
-            resize_keyboard=True
-        )
-        await update.message.reply_text(
-            HELP_TEXT,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
-        )
+    if 'start_task_state' in context.user_data:
+        await handle_task_step(update, context)
         return
 
-    # Обробка кнопки "Написати розробнику"
-    if text == "💬 Написати розробнику":
-        await update.message.reply_text(
-            "Напишіть розробнику у Telegram: @ostapsalo",
-            reply_markup=ReplyKeyboardMarkup(
-                [[KeyboardButton("↩️ Назад")]], resize_keyboard=True
-            ),
-            disable_web_page_preview=True
-        )
+    if text == "❓ Не знаю" and 'solving_state' in context.user_data:
+        await handle_dont_know(update, context)
         return
 
-    # Повернення до головного меню
-    if text == "↩️ Назад":
-        await update.message.reply_text(
-            "📍 Головне меню:",
-            reply_markup=build_main_menu(user_id)
-        )
+    if 'solving_state' in context.user_data:
+        await handle_task_answer(update, context)
         return
-    
-def build_topic_keyboard(topics=None):
-    if topics is None:
-        topics = get_all_topics()
-    if not topics:
-        return ReplyKeyboardMarkup([[KeyboardButton("❌ Немає тем")]], resize_keyboard=True)
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton(t)] for t in topics] + [[KeyboardButton("↩️ Назад")]],
-        resize_keyboard=True
+
+    # Обробка невідомих команд або тексту
+    await update.message.reply_text(
+        "Незрозуміла команда. Використовуйте кнопки меню.",
+        reply_markup=build_main_menu(user_id)
     )
+
+    try:
+        update_streak_and_reward(user_id)
+    except Exception as e:
+        print(f"[Помилка] Не вдалося оновити last_activity для {user_id}: {e}")
+        
+    username = update.effective_user.username or ""
+    if username:
+        update_user(user_id, "username", username)

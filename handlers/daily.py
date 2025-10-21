@@ -2,7 +2,6 @@ import datetime
 from telegram import ReplyKeyboardMarkup, KeyboardButton, Update
 from telegram.ext import ContextTypes
 from db import get_user_field, update_user, get_random_task
-from handlers.state import solving_state
 
 async def handle_daily_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -13,12 +12,11 @@ async def handle_daily_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📆 Ти вже отримував щоденну задачу сьогодні!")
         return
 
-    # ТІЛЬКИ daily:
     task = get_random_task(user_id=user_id, is_daily=1)
 
     if task:
         update_user(user_id, "last_daily", today)
-        solving_state[user_id] = {
+        context.user_data['solving_state'] = {
             "topic": task["topic"],
             "level": task["level"],
             "task_ids": [task["id"]],

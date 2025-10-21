@@ -1,13 +1,13 @@
 from telegram import Update, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ContextTypes
 import json
-from handlers.state import (
-    feedback_state,
-    admin_menu_state,
-    add_task_state,
-    edit_task_state,
-    delete_task_state,
-)
+# from handlers.state import (  <-- ВИДАЛЕНО
+#     feedback_state,
+#     admin_menu_state,
+#     add_task_state,
+#     edit_task_state,
+#     delete_task_state,
+# )
 
 from handlers.utils import (
     build_admin_menu,
@@ -37,45 +37,51 @@ from db import (
     add_task,
 )
 
-from handlers.state import feedback_state
+# from handlers.state import feedback_state # <-- ВИДАЛЕНО
 
 TASKS_PER_PAGE = 5
 FEEDBACKS_PER_PAGE = 5
 
 async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    # user_id = update.effective_user.id # <-- Більше не потрібен тут
     text = update.message.text
 
-    if await handle_admin_menu(update, context, user_id, text):
+    # <-- user_id не передається у функції, вони тепер беруть стан з context
+    if await handle_admin_menu(update, context, text):
         return
-    if await handle_add_task(update, context, user_id, text):
+    if await handle_add_task(update, context, text):
         return
-    if await handle_delete_task(update, context, user_id, text):
+    if await handle_delete_task(update, context, text):
         return
-    if await handle_edit_task(update, context, user_id, text):
+    if await handle_edit_task(update, context, text):
         return
 
 async def addtask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    # user_id = update.effective_user.id # <-- Більше не потрібен тут
     text = "➕ Додати задачу"
-    await handle_admin_menu(update, context, user_id, text)
+    await handle_admin_menu(update, context, text) # <-- user_id не передається
 
-async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, text):
-    if user_id in feedback_state and feedback_state[user_id].get("step") == "pagination":
+async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
+    user_id = update.effective_user.id # <-- Отримуємо user_id тут, він потрібен для admin_ids
+
+    # <-- Перевірка стану через context.user_data
+    if context.user_data.get('feedback_state') and context.user_data['feedback_state'].get("step") == "pagination":
         if text == "↩️ Назад":
-            feedback_state.pop(user_id, None)
+            context.user_data.pop('feedback_state', None) # <-- Видалення стану з context
             await update.message.reply_text(
                 "Ви повернулись в адмін-меню.",
                 reply_markup=build_admin_menu()
             )
             return True
+            
     # --- Перегляд звернень користувачів ---
-    if text == "💬 Звернення користувачів" and user_id in admin_menu_state:
+    # <-- Перевірка стану через context.user_data
+    if text == "💬 Звернення користувачів" and context.user_data.get('admin_menu_state'):
         feedbacks = get_all_feedback()
         if not feedbacks:
             await update.message.reply_text("Немає звернень.", reply_markup=build_admin_menu())
             return True
-        feedback_state[user_id] = {"page": 0, "step": "pagination"}
+        context.user_data['feedback_state'] = {"page": 0, "step": "pagination"} # <-- Збереження стану в context
         msg, total = show_feedback_page_msg(feedbacks, 0)
         has_prev = False
         has_next = FEEDBACKS_PER_PAGE < total
@@ -88,16 +94,17 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     
     # Перехід в адмінку
     
-    if text == "➕ Додати задачу" and user_id in admin_menu_state:
-        add_task_state[user_id] = {"step": "category", "is_daily": 0}
+    if text == "➕ Додати задачу" and context.user_data.get('admin_menu_state'):
+        context.user_data['add_task_state'] = {"step": "category", "is_daily": 0} # <-- Збереження стану в context
         await update.message.reply_text(
             "Оберіть категорію задачі:",
             reply_markup=build_category_keyboard()
         )
         return True
 
-    if user_id in add_task_state and add_task_state[user_id]["step"] == "category" and text in CATEGORIES:
-        state = add_task_state[user_id]
+    # <-- Перевірка стану через context.user_data
+    if context.user_data.get('add_task_state') and context.user_data['add_task_state']["step"] == "category" and text in CATEGORIES:
+        state = context.user_data['add_task_state'] # <-- Отримання стану з context
         data = state.get("data", {})
         data["category"] = text
         state["step"] = "topic"
@@ -108,16 +115,16 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 
     
-    if text == "➕ Додати щоденну задачу" and user_id in admin_menu_state:
-        add_task_state[user_id] = {"step": "topic", "is_daily": 1}
+    if text == "➕ Додати щоденну задачу" and context.user_data.get('admin_menu_state'):
+        context.user_data['add_task_state'] = {"step": "topic", "is_daily": 1} # <-- Збереження стану в context
         await update.message.reply_text(
             "📝 Введи тему ЩОДЕННОЇ задачі:",
             reply_markup=build_cancel_keyboard()
         )
         return True
     
-    # if text == "➕ Додати щоденну задачу" and user_id in admin_menu_state:
-    #     add_task_state[user_id] = {"step": "category", "is_daily": 1}
+    # if text == "➕ Додати щоденну задачу" and context.user_data.get('admin_menu_state'):
+    #     context.user_data['add_task_state'] = {"step": "category", "is_daily": 1}
     #     await update.message.reply_text(
     #         "Оберіть категорію ЩОДЕННОЇ задачі:",
     #         reply_markup=build_category_keyboard()
@@ -125,16 +132,16 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     #     return True
 
 
-    if text == "🗑 Видалити задачу" and user_id in admin_menu_state:
-        delete_task_state[user_id] = {"step": "ask_id"}
+    if text == "🗑 Видалити задачу" and context.user_data.get('admin_menu_state'):
+        context.user_data['delete_task_state'] = {"step": "ask_id"} # <-- Збереження стану в context
         await update.message.reply_text(
             "Введи ID задачі для видалення:",
             reply_markup=build_cancel_keyboard()
         )
         return True
 
-    if text == "✏️ Редагувати задачу" and user_id in admin_menu_state:
-        edit_task_state[user_id] = {"step": "ask_id"}
+    if text == "✏️ Редагувати задачу" and context.user_data.get('admin_menu_state'):
+        context.user_data['edit_task_state'] = {"step": "ask_id"} # <-- Збереження стану в context
         await update.message.reply_text(
             "Введи ID задачі для редагування:",
             reply_markup=build_cancel_keyboard()
@@ -142,25 +149,25 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return True
 
     if text == "🔐 Адмінка" and user_id in admin_ids:
-        admin_menu_state[user_id] = True
+        context.user_data['admin_menu_state'] = True # <-- Збереження стану в context
         await update.message.reply_text(
             "Вітаю в адмін-меню! Оберіть дію:",
             reply_markup=build_admin_menu()
         )
         return True
 
-    if text == "↩️ Назад" and user_id in admin_menu_state:
-        if admin_menu_state[user_id] == True:
+    if text == "↩️ Назад" and context.user_data.get('admin_menu_state'):
+        if context.user_data['admin_menu_state'] == True:
             # Користувач у корені адмін-меню — повертаємо в головне меню
-            admin_menu_state.pop(user_id, None)
+            context.user_data.pop('admin_menu_state', None) # <-- Видалення стану з context
             await update.message.reply_text(
                 "Ви повернулись у головне меню.",
-                reply_markup=build_main_menu(user_id)
+                reply_markup=build_main_menu(user_id) # <-- user_id тут потрібен
             )
             return True
         else:
             # Якщо в підменю — повертаємо в адмін-меню
-            admin_menu_state[user_id] = True
+            context.user_data['admin_menu_state'] = True # <-- Збереження стану в context
             await update.message.reply_text(
                 "Ви повернулись в адмін-меню.",
                 reply_markup=build_admin_menu()
@@ -168,22 +175,22 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             return True
 
     # --- Крок 1: Перехід на вибір теми для перегляду задач ---
-    if text == "📋 Переглянути задачі" and user_id in admin_menu_state:
-        admin_menu_state[user_id] = {"step": "choose_category"}
+    if text == "📋 Переглянути задачі" and context.user_data.get('admin_menu_state'):
+        context.user_data['admin_menu_state'] = {"step": "choose_category"} # <-- Збереження стану в context
         await update.message.reply_text(
             "Оберіть категорію для перегляду задач:",
             reply_markup=build_category_keyboard()
         )
         return True
 
-    if user_id in admin_menu_state and isinstance(admin_menu_state[user_id], dict):
-        state = admin_menu_state[user_id]
+    if context.user_data.get('admin_menu_state') and isinstance(context.user_data['admin_menu_state'], dict):
+        state = context.user_data['admin_menu_state'] # <-- Отримання стану з context
         if state.get("step") == "choose_category" and text in CATEGORIES:
             state["category"] = text
             topics = get_all_topics_by_category(text)
             if not topics:
                 await update.message.reply_text("У цій категорії немає тем.", reply_markup=build_admin_menu())
-                admin_menu_state[user_id] = True
+                context.user_data['admin_menu_state'] = True # <-- Збереження стану в context
                 return True
             state["step"] = "choose_topic"
             await update.message.reply_text(
@@ -192,12 +199,12 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             )
             return True
 
-    if text == "📋 Переглянути щоденні задачі" and user_id in admin_menu_state:
+    if text == "📋 Переглянути щоденні задачі" and context.user_data.get('admin_menu_state'):
         topics = get_all_topics(is_daily=1)
         if not topics:
             await update.message.reply_text("У базі ще немає жодної теми.", reply_markup=build_admin_menu())
             return True
-        admin_menu_state[user_id] = {"step": "choose_topic_daily"}
+        context.user_data['admin_menu_state'] = {"step": "choose_topic_daily"} # <-- Збереження стану в context
         await update.message.reply_text(
             "Оберіть тему для перегляду щоденних задач:",
             reply_markup=build_topics_keyboard(topics + ["↩️ Назад"])
@@ -206,16 +213,20 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 
     # --- Крок 2: Обрано тему — стартуємо пагінацію ---
-    if user_id in admin_menu_state and isinstance(admin_menu_state[user_id], dict):
-        state = admin_menu_state[user_id]
-        topics = get_all_topics(is_daily=int(state.get("step") == "choose_topic_daily"))
+    if context.user_data.get('admin_menu_state') and isinstance(context.user_data['admin_menu_state'], dict):
+        state = context.user_data['admin_menu_state'] # <-- Отримання стану з context
+        # (Виправлено: is_daily=1 якщо step == "choose_topic_daily", інакше 0)
+        is_daily_check = 1 if state.get("step") == "choose_topic_daily" else 0
+        topics = get_all_topics(is_daily=is_daily_check)
+        
         if state.get("step") in ["choose_topic", "choose_topic_daily"] and text in topics:
             state["topic"] = text
             state["page"] = 0
-            state["is_daily"] = 1 if state.get("step") == "choose_topic_daily" else 0  # <-- спочатку!
-            state["step"] = "pagination"  # <-- потім змінюй step
+            state["is_daily"] = 1 if state.get("step") == "choose_topic_daily" else 0
+            state["step"] = "pagination"
             print(f"[DEBUG] Вибрана тема: {text}, state: {state}")
-            await show_tasks_page(update, user_id, state["topic"], 0, is_daily=state["is_daily"])
+            # <-- user_id прибрано з виклику, він там не потрібен
+            await show_tasks_page(update, state["topic"], 0, is_daily=state["is_daily"])
             return True
 
 
@@ -223,7 +234,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
         # Повернення на вибір дії адмінки
         if state.get("step") == "choose_topic" and text == "↩️ Назад":
-            admin_menu_state[user_id] = True
+            context.user_data['admin_menu_state'] = True # <-- Збереження стану в context
             await update.message.reply_text(
                 "Виберіть дію:",
                 reply_markup=build_admin_menu()
@@ -237,11 +248,11 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             is_daily = state.get("is_daily", 0)
             if text == "⬅️ Попередня":
                 state["page"] = max(0, page - 1)
-                await show_tasks_page(update, user_id, topic, state["page"], is_daily=is_daily)
+                await show_tasks_page(update, topic, state["page"], is_daily=is_daily)
                 return True
             if text == "Наступна ➡️":
                 state["page"] = page + 1
-                await show_tasks_page(update, user_id, topic, state["page"], is_daily=is_daily)
+                await show_tasks_page(update, topic, state["page"], is_daily=is_daily)
                 return True
 
 
@@ -280,7 +291,8 @@ def show_feedback_page_msg(feedbacks, page):
 
 from telegram import ReplyKeyboardRemove
 
-async def show_tasks_page(update, user_id, topic, page, is_daily=0):
+# <-- user_id прибрано з аргументів
+async def show_tasks_page(update, topic, page, is_daily=0):
     msg, total = show_tasks_page_msg(topic, page, is_daily)
     has_prev = page > 0
     has_next = (page + 1) * TASKS_PER_PAGE < total
@@ -299,15 +311,18 @@ async def show_tasks_page(update, user_id, topic, page, is_daily=0):
 
 
 
-async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, text):
-    if user_id not in add_task_state:
+async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
+    user_id = update.effective_user.id # <-- Отримуємо user_id
+    
+    # <-- Перевірка стану через context.user_data
+    if 'add_task_state' not in context.user_data:
         return False
-    state = add_task_state[user_id]
+    state = context.user_data['add_task_state'] # <-- Отримання стану з context
     data = state.get("data", {})
 
     if text == "❌ Скасувати":
-        del add_task_state[user_id]
-        if user_id in admin_menu_state:
+        context.user_data.pop('add_task_state', None) # <-- Видалення стану з context
+        if context.user_data.get('admin_menu_state'): # <-- Перевірка стану
             await update.message.reply_text("Додавання задачі скасовано.", reply_markup=build_admin_menu())
         else:
             await update.message.reply_text("Додавання задачі скасовано.", reply_markup=build_main_menu(user_id))
@@ -401,9 +416,9 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         if data["is_daily"] == 1 and "category" not in data:
             data["category"] = "Щоденні"   
         add_task(data)
-        await update.message.reply_text("✅ Задачу додано успішно!", reply_markup=build_admin_menu() if user_id in admin_menu_state else build_main_menu(user_id))
+        await update.message.reply_text("✅ Задачу додано успішно!", reply_markup=build_admin_menu() if context.user_data.get('admin_menu_state') else build_main_menu(user_id))
         await update.message.reply_text("Гуд гьорл! 😎")
-        del add_task_state[user_id]
+        context.user_data.pop('add_task_state', None) # <-- Видалення стану з context
         return True
 
 
@@ -411,14 +426,16 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, us
     return False
 
 
-async def handle_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, text):
-    if user_id not in delete_task_state:
+async def handle_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
+    # <-- Перевірка стану через context.user_data
+    if 'delete_task_state' not in context.user_data:
         return False
     if text == "❌ Скасувати":
-        del delete_task_state[user_id]
+        context.user_data.pop('delete_task_state', None) # <-- Видалення стану з context
         await update.message.reply_text("Видалення скасовано.", reply_markup=build_admin_menu())
         return True
-    state = delete_task_state[user_id]
+    
+    state = context.user_data['delete_task_state'] # <-- Отримання стану з context
     if state["step"] == "ask_id":
         try:
             task_id = int(text)
@@ -429,23 +446,24 @@ async def handle_delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE,
             state['is_daily'] = task.get('is_daily', 0)
             delete_task(task_id)
             await update.message.reply_text(f"✅ Задача {task_id} видалена.", reply_markup=build_admin_menu())
-            del delete_task_state[user_id]
-            admin_menu_state[user_id] = True
+            context.user_data.pop('delete_task_state', None) # <-- Видалення стану з context
+            context.user_data['admin_menu_state'] = True # <-- Збереження стану в context
             return True
         except Exception:
             await update.message.reply_text("ID має бути цілим числом. Введіть ще раз або ❌ Скасувати.")
             return True
     return False
 
-async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, text):
-    if user_id not in edit_task_state:
+async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
+    # <-- Перевірка стану через context.user_data
+    if 'edit_task_state' not in context.user_data:
         return False
 
-    state = edit_task_state[user_id]
+    state = context.user_data['edit_task_state'] # <-- Отримання стану з context
 
     # Скасування
     if text == "❌ Скасувати":
-        del edit_task_state[user_id]
+        context.user_data.pop('edit_task_state', None) # <-- Видалення стану з context
         await update.message.reply_text("Редагування скасовано.", reply_markup=build_admin_menu())
         return True
 
@@ -603,8 +621,8 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
     if state.get("step") == "edit_photo":
         if text == "Пропустити":
             await update.message.reply_text("✅ Задачу оновлено.", reply_markup=build_admin_menu())
-            del edit_task_state[user_id]
-            admin_menu_state[user_id] = True
+            context.user_data.pop('edit_task_state', None) # <-- Видалення стану з context
+            context.user_data['admin_menu_state'] = True # <-- Збереження стану в context
             return True
         # Фото обробляється окремо в handle_edit_task_photo
         if update.message.photo:
@@ -621,13 +639,14 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, u
 async def handle_task_pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print('[DEBUG] callback received!')
     query = update.callback_query
-    user_id = query.from_user.id
+    # user_id = query.from_user.id # <-- Не потрібен для перевірки стану
 
-    if user_id not in admin_menu_state or not isinstance(admin_menu_state[user_id], dict):
+    # <-- Перевірка стану через context.user_data
+    if not context.user_data.get('admin_menu_state') or not isinstance(context.user_data['admin_menu_state'], dict):
         await query.answer()
         return
 
-    state = admin_menu_state[user_id]
+    state = context.user_data['admin_menu_state'] # <-- Отримання стану з context
     topic = state["topic"]
     page = state["page"]
     is_daily = state.get("is_daily", 0)
@@ -640,7 +659,7 @@ async def handle_task_pagination_callback(update: Update, context: ContextTypes.
         page = page + 1
         state["page"] = page
     elif query.data == "back":
-        admin_menu_state[user_id] = True
+        context.user_data['admin_menu_state'] = True # <-- Збереження стану в context
         await query.edit_message_text("Виберіть дію:", reply_markup=build_admin_menu())
         await query.answer()
         return
@@ -661,14 +680,15 @@ async def handle_feedback_pagination_callback(update: Update, context: ContextTy
 
     print(f"[DEBUG] Feedback callback: {query.data}, user_id: {user_id}")
 
-    if user_id not in feedback_state or feedback_state[user_id].get("step") != "pagination":
+    # <-- Перевірка стану через context.user_data
+    if not context.user_data.get('feedback_state') or context.user_data['feedback_state'].get("step") != "pagination":
         await query.answer()
-        print(f"[DEBUG] Feedback callback IGNORED (state: {feedback_state.get(user_id)})")
+        print(f"[DEBUG] Feedback callback IGNORED (state: {context.user_data.get('feedback_state')})")
         return
 
 
     feedbacks = get_all_feedback()
-    state = feedback_state[user_id]
+    state = context.user_data['feedback_state'] # <-- Отримання стану з context
     page = state["page"]
 
     if query.data.startswith("feedback_prev_"):
@@ -689,9 +709,11 @@ async def handle_feedback_pagination_callback(update: Update, context: ContextTy
     await query.answer()
 
 async def handle_add_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in add_task_state:
-        state = add_task_state[user_id]
+    # user_id = update.effective_user.id # <-- Не потрібен для перевірки стану
+    
+    # <-- Перевірка стану через context.user_data
+    if context.user_data.get('add_task_state'):
+        state = context.user_data['add_task_state'] # <-- Отримання стану з context
         if state.get("step") == "photo":
             data = state.get("data", {})
             file_id = update.message.photo[-1].file_id
@@ -706,9 +728,11 @@ async def handle_add_task_photo(update: Update, context: ContextTypes.DEFAULT_TY
     return False
 
 async def handle_edit_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in edit_task_state:
-        state = edit_task_state[user_id]
+    # user_id = update.effective_user.id # <-- Не потрібен для перевірки стану
+
+    # <-- Перевірка стану через context.user_data
+    if context.user_data.get('edit_task_state'):
+        state = context.user_data['edit_task_state'] # <-- Отримання стану з context
         if state.get("step") == "edit_photo":
             task_id = state["task_id"]
             file_id = update.message.photo[-1].file_id
@@ -717,24 +741,25 @@ async def handle_edit_task_photo(update: Update, context: ContextTypes.DEFAULT_T
                 "✅ Фото задачі оновлено.",
                 reply_markup=build_admin_menu()
             )
-            del edit_task_state[user_id]
-            admin_menu_state[user_id] = True  # <-- Повертає до адмін-меню (корінь)
+            context.user_data.pop('edit_task_state', None) # <-- Видалення стану з context
+            context.user_data['admin_menu_state'] = True  # <-- Збереження стану в context
             return True
     return False
 
 async def handle_admin_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    # user_id = update.effective_user.id # <-- Не потрібен для перевірки стану
 
     # 1. Додаємо фото до задачі (створення)
-    if user_id in add_task_state and add_task_state[user_id].get("step") == "photo":
+    # <-- Перевірка стану через context.user_data
+    if context.user_data.get('add_task_state') and context.user_data['add_task_state'].get("step") == "photo":
         await handle_add_task_photo(update, context)
         return
 
     # 2. Редагування фото
-    if user_id in edit_task_state and edit_task_state[user_id].get("step") == "edit_photo":
+    # <-- Перевірка стану через context.user_data
+    if context.user_data.get('edit_task_state') and context.user_data['edit_task_state'].get("step") == "edit_photo":
         await handle_edit_task_photo(update, context)
         return
 
     # 3. Якщо не в стейті — просто ігноруємо або даємо підказку
     await update.message.reply_text("Зараз фото не очікується. Спробуйте спочатку вибрати дію в меню.")
-

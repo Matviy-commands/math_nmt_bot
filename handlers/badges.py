@@ -5,7 +5,6 @@ from db import (
 )
 
 BADGES_LIST = [
-    # --- Бали / прогрес ---
     ("Сотий крок", "💯",
      "Досягни 100 балів та стань майстром математики! (+200 балів)",
      lambda user_id: (get_user_field(user_id, "score") or 0) >= 100,
@@ -26,7 +25,6 @@ BADGES_LIST = [
      lambda user_id: bool(get_user_field(user_id, "all_tasks_completed")),
      500),
 
-    # --- Серії (streak) за протяжність виконання ---
     ("3 дні підряд", "🔥",
      "Виконуй завдання 3 дні поспіль (щоденні або по темах). (+5 балів)",
      lambda user_id: (get_user_field(user_id, "streak_days") or 0) >= 3,
@@ -51,20 +49,17 @@ BADGES_LIST = [
 
 async def show_badges(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    from handlers.state import user_last_menu
-    user_last_menu[user_id] = "badges"
+    context.user_data['user_last_menu'] = "badges"
     badges = set(get_user_badges(user_id))
     got_new = False
     new_badges_msgs = []
 
-    # Автоматичне відкриття бейджів (якщо досягнуто умови)
     for name, emoji, descr, condition, reward in BADGES_LIST:
         if name not in badges and condition(user_id):
             if unlock_badge(user_id, name, reward):
                 got_new = True
                 new_badges_msgs.append(f"{emoji} <b>{name}</b> — відкрито! (+{reward} балів)")
 
-    # Оновити список після можливого відкриття
     badges = set(get_user_badges(user_id))
 
     msg = "<b>🛒 Бонуси / Бейджі</b>\n\n"

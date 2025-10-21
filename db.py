@@ -612,3 +612,14 @@ def get_progress_aggregates(user_id: int):
         done = {(t, l): n for (t, l, n) in cur.fetchall()}
 
         return totals, done
+    
+def get_users_for_reengagement(days_ago: int):
+    target_date = date.today() - timedelta(days=days_ago)
+    
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute(
+            "SELECT id FROM users WHERE last_activity = %s",
+            (target_date,)
+        )
+        return cur.fetchall()

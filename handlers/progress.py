@@ -1,21 +1,21 @@
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ContextTypes
 
-from handlers.state import change_name_state
+# from handlers.state import change_name_state # <-- ВИДАЛЕНО
 from handlers.utils import admin_ids, CATEGORIES, LEVELS
 
 from db import (
     get_user_field, get_level_by_score,
     get_top_users, get_user_rank,
     get_all_topics_by_category, get_user_badges,
-    get_progress_aggregates,   # нова агрегація
+    get_progress_aggregates,
 )
 
 
 async def show_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    from handlers.state import user_last_menu
-    user_last_menu[user_id] = "progress"
+    # from handlers.state import user_last_menu # <-- ВИДАЛЕНО
+    context.user_data['user_last_menu'] = "progress"
 
     score = get_user_field(user_id, "score") or 0
     level = get_level_by_score(score)
@@ -31,7 +31,6 @@ async def show_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Прогрес по темах:</b>\n"
     )
 
-    # одна поїздка в БД замість десятків
     totals, done = get_progress_aggregates(user_id)
 
     for category in CATEGORIES:
@@ -68,17 +67,16 @@ async def show_rating(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     display_name = get_user_field(user_id, "display_name")
 
-    # Якщо не вказано імʼя — просимо ввести
     if not display_name:
-        change_name_state[user_id] = True
+        context.user_data['change_name_state'] = True
         await update.message.reply_text(
             "Введіть імʼя для відображення у рейтингу (2-20 символів):",
             reply_markup=ReplyKeyboardMarkup([[KeyboardButton("❌ Скасувати")]], resize_keyboard=True)
         )
         return
 
-    from handlers.state import user_last_menu
-    user_last_menu[user_id] = "rating"
+    # from handlers.state import user_last_menu # <-- ВИДАЛЕНО
+    context.user_data['user_last_menu'] = "rating"
 
     top_users = get_top_users(10)
     msg = "<b>🏆 Топ-10 учасників:</b>\n\n"
