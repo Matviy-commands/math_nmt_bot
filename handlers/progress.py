@@ -69,12 +69,15 @@ async def show_rating(update: Update, context: ContextTypes.DEFAULT_TYPE):
     display_name = get_user_field(user_id, "display_name")
 
     if not display_name:
-        context.user_data['change_name_state'] = True
+        context.user_data['registration_state'] = {"step": "name"}
         await update.message.reply_text(
-            "Введіть імʼя для відображення у рейтингу (2-20 символів):",
+            "👋 Схоже, ти тут вперше! Давай зареєструємо тебе в рейтингу.\n\n"
+            "Введіть імʼя для відображення (2-20 символів):",
             reply_markup=ReplyKeyboardMarkup([[KeyboardButton("❌ Скасувати")]], resize_keyboard=True)
         )
         return
+
+    context.user_data['user_last_menu'] = "rating"
 
     # from handlers.state import user_last_menu # <-- ВИДАЛЕНО
     await context.bot.send_chat_action(chat_id=user_id, action="typing")

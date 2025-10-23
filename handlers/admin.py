@@ -1,13 +1,8 @@
 from telegram import Update, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ContextTypes
 import json
-# from handlers.state import (  <-- ВИДАЛЕНО
-#     feedback_state,
-#     admin_menu_state,
-#     add_task_state,
-#     edit_task_state,
-#     delete_task_state,
-# )
+import csv
+import io
 
 from handlers.utils import (
     build_admin_menu,
@@ -35,6 +30,7 @@ from db import (
     delete_task,
     update_task_field,
     add_task,
+    get_all_users_for_export,
 )
 
 # from handlers.state import feedback_state # <-- ВИДАЛЕНО
@@ -192,6 +188,39 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 reply_markup=build_topics_keyboard(topics + ["↩️ Назад"])
             )
             return True
+    if text == "📥 Експорт користувачів (CSV)" and context.user_data.get('admin_menu_state'):
+        await context.bot.send_chat_action(chat_id=user_id, action="upload_document")
+        
+        try:
+            users_data = get_all_users_for_export()
+            
+            # Створюємо файл в пам'яті
+            f = io.StringIO()
+            writer = csv.writer(f)
+            
+            # Записуємо заголовки
+            writer.writerow(["Telegram ID", "Ім'я", "Username", "Бали", "Місто", "Телефон", "Остання активність"])
+            
+            # Записуємо дані
+            for user in users_data:
+                writer.writerow(user)
+            
+            f.seek(0) # Повертаємось на початок файлу
+            
+            # Конвертуємо StringIO в BytesIO для відправки
+            bytes_io = io.BytesIO(f.getvalue().encode('utf-8'))
+            
+            await context.bot.send_document(
+                chat_id=user_id,
+                document=bytes_io,
+                filename="users_export.csv",
+                caption=f"✅ Ось експорт {len(users_data)} користувачів."
+            )
+            
+        except Exception as e:
+            await update.message.reply_text(f"❌ Не вдалося створити експорт: {e}")
+            
+        return True    
 
     if text == "📋 Переглянути щоденні задачі" and context.user_data.get('admin_menu_state'):
         topics = get_all_topics(is_daily=1)
@@ -248,6 +277,8 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 state["page"] = page + 1
                 await show_tasks_page(update, topic, state["page"], is_daily=is_daily)
                 return True
+            
+            
 
 
     return False

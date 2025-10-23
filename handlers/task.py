@@ -446,6 +446,81 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=ReplyKeyboardMarkup([[KeyboardButton("❌ Скасувати")]], resize_keyboard=True)
         )
         return
+    if 'registration_state' in context.user_data:
+        state = context.user_data['registration_state']
+        
+        if text == "❌ Скасувати":
+            context.user_data.pop('registration_state', None)
+            await update.message.reply_text(
+                "Реєстрацію скасовано.",
+                reply_markup=build_main_menu(user_id)
+            )
+            return
+
+        # Крок 1: Отримали ім'я
+        if state.get("step") == "name":
+            new_name = text.strip()
+            if not (2 <= len(new_name) <= 20):
+                await update.message.reply_text("Імʼя повинно бути від 2 до 20 символів. Спробуйте ще раз:")
+                return
+            
+            update_user(user_id, "display_name", new_name)
+            state["step"] = "city"
+            await update.message.reply_text(
+                f"✅ Чудово, {new_name}!\n\n"
+                "📍 Тепер, будь ласка, вкажіть ваше місто (це допоможе нам у статистиці):",
+                reply_markup=ReplyKeyboardMarkup([[KeyboardButton("❌ Скасувати")]], resize_keyboard=True)
+            )
+            return
+
+        # Крок 2: Отримали місто
+        elif state.get("step") == "city":
+            city = text.strip()
+            if not (2 <= len(city) <= 30):
+                 await update.message.reply_text("Назва міста має бути від 2 до 30 символів. Спробуйте ще раз:")
+                 return
+            
+            update_user(user_id, "city", city)
+            state["step"] = "phone"
+            
+            # Запитуємо телефон (з кнопкою "Поділитись контактом")
+            keyboard = ReplyKeyboardMarkup(
+                [[KeyboardButton("📱 Поділитись контактом", request_contact=True)], [KeyboardButton("❌ Скасувати")]],
+                resize_keyboard=True, one_time_keyboard=True
+            )
+            await update.message.reply_text(
+                f"✅ Місто: {city}.\n\n"
+                "📞 Майже готово! Натисніть кнопку 'Поділитись контактом' або введіть номер вручну (у форматі +380...):",
+                reply_markup=keyboard
+            )
+            return
+
+        # Крок 3: Отримали телефон (або через кнопку, або текстом)
+        elif state.get("step") == "phone":
+            phone = ""
+            if update.message.contact:
+                phone = update.message.contact.phone_number
+            else:
+                phone = text.strip()
+            
+            # Проста перевірка формату
+            if not (phone.startswith('+') and len(phone) >= 10 and phone[1:].isdigit()):
+                 await update.message.reply_text("Некоректний формат. Будь ласка, натисніть кнопку або введіть номер у форматі +380...")
+                 return
+
+            update_user(user_id, "phone_number", phone)
+            context.user_data.pop('registration_state', None)
+            
+            await update.message.reply_text(
+                "🎉 <b>Дякуємо за реєстрацію!</b>\n\n"
+                "Ваші дані успішно збережено. Тепер ви можете переглянути своє місце в рейтингу.",
+                parse_mode="HTML"
+            )
+            # Одразу показуємо рейтинг, заради якого все почалось
+            await show_rating(update, context)
+            return
+            
+        return
 
     if context.user_data.get('change_name_state'):
         if text == "❌ Скасувати":

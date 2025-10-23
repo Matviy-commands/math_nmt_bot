@@ -49,6 +49,7 @@ BADGES_LIST = [
 
 async def show_badges(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    await context.bot.send_chat_action(chat_id=user_id, action="typing")
     context.user_data['user_last_menu'] = "badges"
     badges = set(get_user_badges(user_id))
     got_new = False

@@ -73,7 +73,9 @@ def init_db():
                 topics_total INTEGER DEFAULT 0,
                 topics_completed INTEGER DEFAULT 0,
                 last_activity DATE,
-                streak_days INTEGER DEFAULT 0
+                streak_days INTEGER DEFAULT 0,
+                city TEXT,
+                phone_number TEXT      
             )
         """)
         cur.execute("""
@@ -622,4 +624,15 @@ def get_users_for_reengagement(days_ago: int):
             "SELECT id FROM users WHERE last_activity = %s",
             (target_date,)
         )
+        return cur.fetchall()
+    
+def get_all_users_for_export():
+    with connect() as con:
+        cur = con.cursor()
+        cur.execute("""
+            SELECT id, display_name, username, score, city, phone_number, last_activity
+            FROM users
+            ORDER BY score DESC
+        """)
+        # Повертає список кортежів
         return cur.fetchall()
