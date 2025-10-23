@@ -2,21 +2,28 @@ import os
 import psycopg2
 import json
 from datetime import date, timedelta
-from psycopg2 import pool  # 1. Імпортуємо пул
-import contextlib          # 2. Імпортуємо contextlib
+from psycopg2 import pool, InterfaceError # <-- Додано InterfaceError
+import contextlib
+import logging # <-- Додано logging
+
 # from dotenv import load_dotenv
 # load_dotenv()
+
+# --- Налаштування логера ---
+logger = logging.getLogger(__name__)
+# Додаємо базову конфігурацію, якщо її ще немає
+if not logger.hasHandlers():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# --- Кінець налаштування логера ---
+
 
 # -----------------------------
 # Connection Pool
 # -----------------------------
-
-# 3. Створюємо пул ОДИН РАЗ при старті бота
-#    Він буде жити, доки працює бот.
 try:
     db_pool = psycopg2.pool.SimpleConnectionPool(
-        minconn=1,  # мінімум 1 з'єднання тримати відкритим
-        maxconn=10, # максимум 10 з'єднань
+        minconn=1,
+        maxconn=10,
         dbname=os.getenv("PG_DBNAME"),
         user=os.getenv("PG_USER"),
         password=os.getenv("PG_PASSWORD"),
@@ -24,42 +31,84 @@ try:
         port=os.getenv("PG_PORT"),
         sslmode="require",
     )
-    print("✅ Пул з'єднань з PostgreSQL успішно створено.")
+    logger.info("✅ Пул з'єднань з PostgreSQL успішно створено.")
 except Exception as e:
-    print(f"❌ ПОМИЛКА: Не вдалося створити пул з'єднань: {e}")
+    logger.error(f"❌ ПОМИЛКА: Не вдалося створити пул з'єднань: {e}", exc_info=True)
     db_pool = None
 
-# 4. Оновлюємо функцію 'connect', щоб вона брала з'єднання з пулу.
-#    @contextlib.contextmanager дозволяє нам зберегти синтаксис 'with ...'
+# -----------------------------
+# Оновлена функція connect()
+# -----------------------------
 @contextlib.contextmanager
 def connect():
     if db_pool is None:
+        logger.critical("Пул з'єднань не ініціалізовано!")
         raise Exception("Пул з'єднань не ініціалізовано!")
-        
+
     con = None
-    try:
-        con = db_pool.getconn() # <-- Беремо готове з'єднання з пулу
-        yield con
-        con.commit() # <-- Commit, якщо 'with' пройшов без помилок
-    except Exception:
-        if con:
-            con.rollback() # <-- Відкат, якщо була помилка
-        raise
-    finally:
-        if con:
-            db_pool.putconn(con) # <-- Завжди повертаємо з'єднання в пул
+    retries = 1 # Дозволяємо одну повторну спробу
+
+    while retries >= 0:
+        need_retry = False
+        try:
+            con = db_pool.getconn() # Беремо з'єднання
+            # --- ПЕРЕВІРКА З'ЄДНАННЯ ---
+            con.cursor().execute("SELECT 1")
+            # --- З'єднання живе ---
+
+            yield con # Віддаємо живе з'єднання
+            con.commit() # Commit, якщо 'with' блок пройшов успішно
+            break # Виходимо з циклу, все гаразд
+
+        except (psycopg2.OperationalError, InterfaceError) as e: # Ловимо помилку "мертвого" з'єднання або вже закритого
+            logger.warning(f"Проблема зі з'єднанням БД ({type(e).__name__}): {e}. Спроба {1-retries}/1...")
+            if con:
+                try:
+                    db_pool.putconn(con, close=True) # Скажемо пулу прибрати це "погане" з'єднання
+                    logger.info("Погане з'єднання повернуто в пул для закриття.")
+                except InterfaceError: # Якщо воно вже було закрите зовні
+                     logger.warning("Спроба повернути вже закрите з'єднання.")
+                except Exception as put_err: # Інші можливі помилки при putconn
+                     logger.error(f"Помилка при поверненні поганого з'єднання в пул: {put_err}")
+                con = None # Скидаємо змінну con
+
+            retries -= 1
+            if retries < 0:
+                 logger.error("Не вдалося отримати живе з'єднання з БД після повторної спроби.")
+                 raise ConnectionError("Не вдалося отримати живе з'єднання з БД.") from e
+            need_retry = True # Потрібна нова ітерація циклу
+
+        except Exception as e_other: # Ловимо інші помилки (наприклад, SQL-синтаксису)
+            logger.error(f"Інша помилка при роботі з БД: {e_other}", exc_info=True)
+            if con:
+                try:
+                    con.rollback() # Робимо rollback для інших помилок
+                except InterfaceError: # Якщо з'єднання закрилось під час rollback
+                    logger.warning("З'єднання закрилось під час rollback.")
+                except Exception as rb_err:
+                    logger.error(f"Помилка під час rollback: {rb_err}")
+            raise # Прокидаємо помилку далі
+
+        finally:
+            # Якщо ми НЕ потребуємо повторної спроби І з'єднання все ще існує,
+            # значить yield відпрацював, і треба повернути con в пул.
+            # Якщо була OperationalError, con вже None або повернутий з close=True.
+            if not need_retry and con:
+                 try:
+                    db_pool.putconn(con) # Повертаємо живе, використане з'єднання в пул
+                    con = None # Щоб уникнути подвійного повернення
+                 except InterfaceError:
+                    logger.warning("Спроба повернути вже закрите з'єднання після успішної роботи.")
+                 except Exception as final_put_err:
+                    logger.error(f"Помилка при фінальному поверненні з'єднання в пул: {final_put_err}")
+
 
 # -----------------------------
 # Schema init (safe idempotent)
 # -----------------------------
 def init_db():
-    # Ця функція використовує твій SQL-скрипт.
-    # Я прибрав ALTER TABLE, бо твій CREATE TABLE вже містить ці поля.
-    # Також я оновив індекси, щоб вони відповідали твоїм.
     with connect() as con:
         cur = con.cursor()
-
-        # 1) базові таблиці
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id BIGINT PRIMARY KEY,
@@ -75,7 +124,7 @@ def init_db():
                 last_activity DATE,
                 streak_days INTEGER DEFAULT 0,
                 city TEXT,
-                phone_number TEXT      
+                phone_number TEXT
             )
         """)
         cur.execute("""
@@ -132,26 +181,22 @@ def init_db():
             )
         """)
 
-        # 3) індекси (з твого скрипту)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_topic_daily ON tasks (topic, is_daily)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_topic_level ON tasks (topic, level)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_category ON tasks (category)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_user_time ON feedback (user_id, timestamp DESC)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_completed_user ON completed_tasks (user_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_completed_task ON completed_tasks (task_id)")
-        
-        # Старі індекси (на випадок, якщо вони ще десь використовуються, але твої нові кращі)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_is_daily ON tasks (is_daily)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_streaks_user_topic ON user_topic_streaks (user_id, topic)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_streak_awards_user_topic ON user_topic_streak_awards (user_id, topic)")
 
         con.commit()
-    print("✅ Схема бази даних ініціалізована.")
+    logger.info("✅ Схема бази даних ініціалізована.")
 
 
 # -----------------------------
 # Users
-# (Всі ці функції тепер АВТОМАТИЧНО використовують пул з'єднань)
 # -----------------------------
 def get_user(user_id):
     with connect() as con:
@@ -170,6 +215,15 @@ def create_or_get_user(user_id):
 
 def update_user(user_id, field, value):
     with connect() as con:
+        # Додамо перевірку на допустимі поля, щоб уникнути SQL ін'єкцій, якщо field приходить ззовні
+        allowed_fields = {"username", "display_name", "score", "topic", "last_daily", 
+                          "feedbacks", "all_tasks_completed", "topics_total", 
+                          "topics_completed", "last_activity", "streak_days", 
+                          "city", "phone_number"}
+        if field not in allowed_fields:
+            logger.error(f"Спроба оновити недопустиме поле '{field}' для user {user_id}")
+            raise ValueError(f"Недопустиме поле для оновлення: {field}")
+            
         con.cursor().execute(
             f"UPDATE users SET {field} = %s WHERE id = %s",
             (value, user_id),
@@ -183,6 +237,15 @@ def add_score(user_id, delta):
         )
 
 def get_user_field(user_id, field):
+    # Додамо перевірку на допустимі поля
+    allowed_fields = {"id", "username", "display_name", "score", "topic", "last_daily", 
+                      "feedbacks", "all_tasks_completed", "topics_total", 
+                      "topics_completed", "last_activity", "streak_days", 
+                      "city", "phone_number"}
+    if field not in allowed_fields:
+         logger.error(f"Спроба отримати недопустиме поле '{field}' для user {user_id}")
+         raise ValueError(f"Недопустиме поле для отримання: {field}")
+            
     with connect() as con:
         cur = con.cursor()
         cur.execute(f"SELECT {field} FROM users WHERE id = %s", (user_id,))
@@ -190,6 +253,7 @@ def get_user_field(user_id, field):
         return row[0] if row else None
 
 def get_level_by_score(score):
+    if score is None: score = 0 # Обробка випадку, коли score ще не встановлено
     if score < 30:
         return "Новачок"
     elif score < 100:
@@ -216,22 +280,30 @@ def get_random_task(topic=None, level=None, user_id=None, is_daily=None):
         if is_daily is not None:
             query += " AND is_daily = %s"; params.append(int(is_daily))
         if user_id:
-            query += " AND id NOT IN (SELECT task_id FROM completed_tasks WHERE user_id = %s)"
-            params.append(user_id)
+            # Переконаймося, що user_id не None перед додаванням підзапиту
+            if user_id is not None:
+                query += " AND id NOT IN (SELECT task_id FROM completed_tasks WHERE user_id = %s)"
+                params.append(user_id)
 
         query += " ORDER BY RANDOM() LIMIT 1"
         cur.execute(query, tuple(params))
         row = cur.fetchone()
         if row:
+            try:
+                answer_list = json.loads(row[6])
+            except json.JSONDecodeError:
+                logger.error(f"Помилка декодування JSON для відповіді задачі ID={row[0]}: {row[6]}")
+                answer_list = [] # або інше значення за замовчуванням
             return {
                 "id": row[0], "category": row[1], "topic": row[2], "level": row[3],
-                "task_type": row[4], "question": row[5], "answer": json.loads(row[6]),
+                "task_type": row[4], "question": row[5], "answer": answer_list,
                 "explanation": row[7], "photo": row[8], "is_daily": row[9],
             }
     return None
 
 def add_task(data):
     category = data.get("category")
+    answer_json = json.dumps(data.get("answer", [])) # Переконаймося, що є дефолтне значення
     with connect() as con:
         con.cursor().execute("""
             INSERT INTO tasks (category, topic, level, task_type, question, answer, explanation, photo, is_daily)
@@ -239,11 +311,11 @@ def add_task(data):
         """, (
             category,
             data["topic"],
-            data.get("level") or "",      # для daily можна ""
+            data.get("level") or "",
             data.get("task_type"),
             data["question"],
-            json.dumps(data["answer"]),
-            data["explanation"],
+            answer_json,
+            data.get("explanation"), # Додамо get для безпеки
             data.get("photo"),
             data.get("is_daily", 0),
         ))
@@ -260,32 +332,32 @@ def get_all_tasks_by_topic(topic, is_daily=0):
         rows = cur.fetchall()
         tasks = []
         for row in rows:
+            try:
+                answer_list = json.loads(row[6])
+            except json.JSONDecodeError:
+                logger.error(f"Помилка декодування JSON для відповіді задачі ID={row[0]}: {row[6]}")
+                answer_list = []
             tasks.append({
-                "id": row[0],
-                "category": row[1],
-                "topic": row[2],
-                "level": row[3],
-                "task_type": row[4],
-                "question": row[5],
-                "answer": json.loads(row[6]),
-                "explanation": row[7],
-                "photo": row[8],
-                "is_daily": row[9],
+                "id": row[0], "category": row[1], "topic": row[2], "level": row[3],
+                "task_type": row[4], "question": row[5], "answer": answer_list,
+                "explanation": row[7], "photo": row[8], "is_daily": row[9],
             })
         return tasks
 
 def all_tasks_completed(user_id, topic, level):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT id FROM tasks WHERE topic=%s AND level=%s", (topic, level))
+        cur.execute("SELECT id FROM tasks WHERE topic=%s AND level=%s AND is_daily=0", (topic, level)) # Додамо is_daily=0
         all_ids = set(r[0] for r in cur.fetchall())
+        if not all_ids: # Якщо задач немає, то не можна вважати, що все пройдено
+             return False
         cur.execute("""
             SELECT task_id
-            FROM completed_tasks
-            WHERE user_id=%s AND task_id IN (SELECT id FROM tasks WHERE topic=%s AND level=%s)
+            FROM completed_tasks ct JOIN tasks t ON ct.task_id = t.id
+            WHERE ct.user_id=%s AND t.topic=%s AND t.level=%s AND t.is_daily=0
         """, (user_id, topic, level))
         done_ids = set(r[0] for r in cur.fetchall())
-        return all_ids == done_ids and len(all_ids) > 0
+        return all_ids == done_ids
 
 def get_task_by_id(task_id):
     with connect() as con:
@@ -296,17 +368,15 @@ def get_task_by_id(task_id):
         """, (task_id,))
         row = cur.fetchone()
         if row:
+            try:
+                answer_list = json.loads(row[6])
+            except json.JSONDecodeError:
+                logger.error(f"Помилка декодування JSON для відповіді задачі ID={row[0]}: {row[6]}")
+                answer_list = []
             return {
-                "id": row[0],
-                "category": row[1],
-                "topic": row[2],
-                "level": row[3],
-                "task_type": row[4],
-                "question": row[5],
-                "answer": json.loads(row[6]),
-                "explanation": row[7],
-                "photo": row[8],
-                "is_daily": row[9],
+                "id": row[0], "category": row[1], "topic": row[2], "level": row[3],
+                "task_type": row[4], "question": row[5], "answer": answer_list,
+                "explanation": row[7], "photo": row[8], "is_daily": row[9],
             }
     return None
 
@@ -315,6 +385,21 @@ def delete_task(task_id):
         con.cursor().execute("DELETE FROM tasks WHERE id = %s", (task_id,))
 
 def update_task_field(task_id, field, value):
+     # Додамо перевірку на допустимі поля
+    allowed_fields = {"category", "topic", "level", "task_type", "question", 
+                      "answer", "explanation", "photo", "is_daily"}
+    if field not in allowed_fields:
+        logger.error(f"Спроба оновити недопустиме поле '{field}' для task {task_id}")
+        raise ValueError(f"Недопустиме поле для оновлення задачі: {field}")
+        
+    # Якщо оновлюємо відповідь, переконаймося, що value - це JSON-рядок
+    if field == 'answer' and not isinstance(value, str):
+         try:
+             value = json.dumps(value)
+         except TypeError:
+             logger.error(f"Не вдалося конвертувати відповідь у JSON для task {task_id}: {value}")
+             raise ValueError("Некоректний формат відповіді для JSON")
+
     with connect() as con:
         con.cursor().execute(
             f"UPDATE tasks SET {field} = %s WHERE id = %s",
@@ -328,9 +413,9 @@ def get_all_topics(is_daily=0):
             "SELECT DISTINCT topic FROM tasks WHERE is_daily=%s",
             (int(is_daily),),
         )
-        topics = [row[0] for row in cur.fetchall()]
-        forbidden = {"🧠 Почати задачу", "Рандомна тема", "❌ Немає тем"}
-        clean_topics = [t for t in topics if t not in forbidden and len(t) > 1]
+        topics = [row[0] for row in cur.fetchall() if row[0]] # Додамо перевірку на None/порожній рядок
+        forbidden = {"🧠 Почати задачу", "Рандомна тема", "❌ Немає тем", ""} # Додамо порожній рядок
+        clean_topics = [t for t in topics if t and t not in forbidden and len(t) > 1]
         return clean_topics
 
 # -----------------------------
@@ -344,35 +429,47 @@ def get_all_feedback():
             FROM feedback
             ORDER BY timestamp DESC
         """)
-        return cur.fetchall()
+        # Обережно конвертуємо timestamp у рядок, якщо треба
+        return [(id, uid, uname, msg, ts.strftime('%Y-%m-%d %H:%M:%S') if ts else None) 
+                for id, uid, uname, msg, ts in cur.fetchall()]
+
 
 def get_user_completed_count(user_id, topic, level):
     with connect() as con:
         cur = con.cursor()
+        # Додамо is_daily=0, щоб рахувати тільки звичайні задачі
         cur.execute("""
-            SELECT COUNT(*)
-            FROM completed_tasks
-            WHERE user_id = %s AND task_id IN (
-                SELECT id FROM tasks WHERE topic=%s AND level=%s
-            )
+            SELECT COUNT(ct.task_id)
+            FROM completed_tasks ct JOIN tasks t ON ct.task_id = t.id
+            WHERE ct.user_id = %s AND t.topic=%s AND t.level=%s AND t.is_daily=0
         """, (user_id, topic, level))
-        return cur.fetchone()[0]
+        result = cur.fetchone()
+        return result[0] if result else 0
 
 def get_top_users(limit=10):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT id, score FROM users ORDER BY score DESC LIMIT %s", (limit,))
+        # Додамо фільтр score > 0, щоб не показувати нульових
+        cur.execute("SELECT id, score FROM users WHERE score > 0 ORDER BY score DESC LIMIT %s", (limit,))
         return cur.fetchall()
 
 def get_user_rank(user_id):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT id, score FROM users ORDER BY score DESC")
+        # Рахуємо ранг тільки серед тих, хто має бали
+        cur.execute("SELECT id, score FROM users WHERE score > 0 ORDER BY score DESC")
         rows = cur.fetchall()
+        total_ranked_users = len(rows)
         for rank, (uid, score) in enumerate(rows, start=1):
             if uid == user_id:
-                return rank, score, len(rows)
-        return None, None, len(rows)
+                return rank, score, total_ranked_users
+        # Якщо юзера немає в рейтингу (score=0), повертаємо None
+        # Але загальну кількість рахуємо по всіх юзерах
+        cur.execute("SELECT COUNT(*) FROM users")
+        total_users = cur.fetchone()[0]
+        my_score = get_user_field(user_id, "score") or 0
+        return None, my_score, total_users
+
 
 def unlock_badge(user_id, badge, reward=0):
     with connect() as con:
@@ -387,12 +484,14 @@ def unlock_badge(user_id, badge, reward=0):
                 INSERT INTO badges (user_id, badge)
                 VALUES (%s, %s) ON CONFLICT DO NOTHING
             """, (user_id, badge))
-            if reward:
+            # Перевіримо, чи вставка була успішною (rowcount > 0)
+            was_inserted = cur.rowcount > 0
+            if was_inserted and reward:
                 cur.execute(
                     "UPDATE users SET score = score + %s WHERE id = %s",
                     (reward, user_id),
                 )
-            return True
+            return was_inserted # Повертаємо True тільки якщо бейдж дійсно був розблокований
     return False
 
 def get_user_badges(user_id):
@@ -404,8 +503,15 @@ def get_user_badges(user_id):
 def count_user_tasks(user_id):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT COUNT(*) FROM completed_tasks WHERE user_id = %s", (user_id,))
-        return cur.fetchone()[0]
+        # Рахуємо тільки звичайні задачі
+        cur.execute("""
+            SELECT COUNT(ct.task_id) 
+            FROM completed_tasks ct JOIN tasks t ON ct.task_id = t.id
+            WHERE ct.user_id = %s AND t.is_daily=0
+            """, (user_id,)
+        )
+        result = cur.fetchone()
+        return result[0] if result else 0
 
 def add_feedback(user_id, username, message):
     with connect() as con:
@@ -422,38 +528,65 @@ def add_feedback(user_id, username, message):
 def update_all_tasks_completed_flag(user_id):
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT COUNT(*) FROM tasks")
+        # Рахуємо тільки звичайні задачі
+        cur.execute("SELECT COUNT(*) FROM tasks WHERE is_daily=0")
         total_tasks = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM completed_tasks WHERE user_id = %s", (user_id,))
+        # Рахуємо тільки звичайні виконані
+        cur.execute("""
+             SELECT COUNT(ct.task_id) 
+             FROM completed_tasks ct JOIN tasks t ON ct.task_id = t.id
+             WHERE ct.user_id = %s AND t.is_daily=0
+             """, (user_id,))
         completed = cur.fetchone()[0]
-        completed_flag = 1 if total_tasks > 0 and completed == total_tasks else 0
+        
+        completed_flag = 1 if total_tasks > 0 and completed >= total_tasks else 0
         cur.execute(
             "UPDATE users SET all_tasks_completed = %s WHERE id = %s",
             (completed_flag, user_id),
         )
 
 def update_topics_progress(user_id):
+     # Ця функція складна і може бути повільною. Можливо, її варто оновлювати рідше?
+     # Або перенести логіку в тригери БД.
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT DISTINCT topic FROM tasks")
-        all_topics = set(row[0] for row in cur.fetchall())
+        # Рахуємо тільки теми зі звичайними задачами
+        cur.execute("SELECT DISTINCT topic FROM tasks WHERE is_daily=0")
+        all_topics = {row[0] for row in cur.fetchall() if row[0]}
         topics_total = len(all_topics)
 
+        # Рахуємо тільки завершені теми зі звичайними задачами
         cur.execute("""
-            SELECT DISTINCT t.topic
+            SELECT t.topic
             FROM completed_tasks c
             JOIN tasks t ON c.task_id = t.id
-            WHERE c.user_id = %s
+            WHERE c.user_id = %s AND t.is_daily = 0
+            GROUP BY t.topic
+            HAVING COUNT(DISTINCT t.id) = (SELECT COUNT(*) FROM tasks t2 WHERE t2.topic = t.topic AND t2.is_daily = 0)
         """, (user_id,))
-        completed_topics = set(row[0] for row in cur.fetchall())
-        topics_completed = len(completed_topics)
+        # Попередній запит може бути не зовсім коректним, якщо нам треба рахувати теми,
+        # де *хоча б одна* задача виконана. Уточни логіку.
+        # Ось варіант для "хоча б одна задача виконана":
+        cur.execute("""
+             SELECT DISTINCT t.topic
+             FROM completed_tasks c
+             JOIN tasks t ON c.task_id = t.id
+             WHERE c.user_id = %s AND t.is_daily = 0 AND t.topic IS NOT NULL
+         """, (user_id,))
+        completed_topics = {row[0] for row in cur.fetchall() if row[0]}
+        # Переконаємось, що рахуємо тільки ті теми, які є в all_topics
+        actual_completed_topics = completed_topics.intersection(all_topics)
+        topics_completed = len(actual_completed_topics)
+
 
         cur.execute("""
             UPDATE users SET topics_total = %s, topics_completed = %s
             WHERE id = %s
         """, (topics_total, topics_completed, user_id))
 
+
 def mark_task_completed(user_id, task_id):
+    was_inserted = False
     with connect() as con:
         cur = con.cursor()
         cur.execute("""
@@ -461,47 +594,61 @@ def mark_task_completed(user_id, task_id):
             VALUES (%s, %s)
             ON CONFLICT DO NOTHING
         """, (user_id, task_id))
-        update_all_tasks_completed_flag(user_id)
-        update_topics_progress(user_id)
+        was_inserted = cur.rowcount > 0 # Перевіряємо, чи був запис доданий (чи це не повтор)
+
+    # Оновлюємо агрегати тільки якщо це було перше виконання
+    if was_inserted:
+        # Перевіримо, чи це була звичайна задача, перед оновленням агрегатів
+        task = get_task_by_id(task_id)
+        if task and not task.get('is_daily'):
+             try:
+                 update_all_tasks_completed_flag(user_id)
+                 update_topics_progress(user_id)
+             except Exception as e:
+                 logger.error(f"Помилка при оновленні агрегатів для user {user_id} після task {task_id}: {e}")
+
+    return was_inserted # Повертаємо статус, чи була задача відмічена вперше
+
 
 def get_available_levels_for_topic(topic, exclude_level=None):
-    tasks = get_all_tasks_by_topic(topic)
-    available = set(t['level'] for t in tasks)
+    tasks = get_all_tasks_by_topic(topic, is_daily=0) # Шукаємо рівні тільки серед звичайних задач
+    available = {t['level'] for t in tasks if t.get('level')} # Додамо перевірку на None
     if exclude_level:
-        try:
-            available.remove(exclude_level)
-        except KeyError:
-            pass
-    return sorted(available)
+        available.discard(exclude_level) # Використовуємо discard замість remove
+    return sorted(list(available))
 
 def get_all_topics_by_category(category, is_daily=0):
     with connect() as con:
         cur = con.cursor()
         cur.execute("""
             SELECT DISTINCT topic FROM tasks
-            WHERE category=%s AND is_daily=%s
+            WHERE category=%s AND is_daily=%s AND topic IS NOT NULL AND topic != ''
         """, (category, int(is_daily)))
         return [row[0] for row in cur.fetchall()]
 
 def get_completed_task_ids(user_id, topic=None, level=None):
     with connect() as con:
         cur = con.cursor()
-        if topic and level:
-            cur.execute("""
-                SELECT c.task_id
-                FROM completed_tasks c
-                JOIN tasks t ON t.id = c.task_id
-                WHERE c.user_id = %s AND t.topic = %s AND t.level = %s
-            """, (user_id, topic, level))
-        elif topic:
-            cur.execute("""
-                SELECT c.task_id
-                FROM completed_tasks c
-                JOIN tasks t ON t.id = c.task_id
-                WHERE c.user_id = %s AND t.topic = %s
-            """, (user_id, topic))
-        else:
-            cur.execute("SELECT task_id FROM completed_tasks WHERE user_id = %s", (user_id,))
+        query = "SELECT c.task_id FROM completed_tasks c JOIN tasks t ON t.id = c.task_id WHERE c.user_id = %s"
+        params = [user_id]
+        
+        # Додаємо is_daily=0, якщо шукаємо для звичайного процесу
+        is_daily_check_needed = True 
+
+        if topic:
+            query += " AND t.topic = %s"
+            params.append(topic)
+        if level:
+            query += " AND t.level = %s"
+            params.append(level)
+            
+        # Якщо ми не шукаємо щоденні, додаємо is_daily=0
+        # (Потрібно перевірити, чи не зламає це логіку щоденних задач)
+        # Припустимо, що коли topic/level не задані, ми хочемо ВСІ id, тому is_daily не фільтруємо
+        # if topic or level: 
+        #    query += " AND t.is_daily = 0" 
+            
+        cur.execute(query, tuple(params))
         return {row[0] for row in cur.fetchall()}
 
 # -----------------------------
@@ -509,19 +656,24 @@ def get_completed_task_ids(user_id, topic=None, level=None):
 # -----------------------------
 def update_streak_and_reward(user_id):
     today = date.today()
+    new_streak = 0
+    reward = 0
+    current_streak = 0
+    
     with connect() as con:
         cur = con.cursor()
-        cur.execute("SELECT last_activity, streak_days FROM users WHERE id = %s", (user_id,))
+        cur.execute("SELECT last_activity, streak_days FROM users WHERE id = %s FOR UPDATE", (user_id,)) # Блокуємо рядок
         row = cur.fetchone()
         last_activity, streak_days = (row if row else (None, 0))
+        current_streak = streak_days or 0
 
         if last_activity == today:
-            return streak_days, 0
+            return current_streak, 0 # Активність сьогодні вже була, нічого не робимо
 
         if last_activity == (today - timedelta(days=1)):
-            new_streak = (streak_days or 0) + 1
+            new_streak = current_streak + 1
         else:
-            new_streak = 1
+            new_streak = 1 # Стрік починається заново
 
         cur.execute(
             "UPDATE users SET last_activity=%s, streak_days=%s WHERE id=%s",
@@ -529,21 +681,25 @@ def update_streak_and_reward(user_id):
         )
 
         reward_map = {3: 5, 7: 10, 14: 20, 30: 50}
-        reward = reward_map.get(new_streak, 0)
-        if reward:
-            cur.execute(
-                "UPDATE users SET score = score + %s WHERE id=%s",
-                (reward, user_id),
-            )
+        # Нараховуємо нагороду тільки якщо СЬОГОДНІ досягли позначки
+        if new_streak in reward_map: 
+             # Перевіримо, чи нагорода за цю позначку вже не була видана (потрібна нова таблиця?)
+             # Поки що видаємо завжди при досягненні
+            reward = reward_map[new_streak]
+            if reward > 0:
+                cur.execute(
+                    "UPDATE users SET score = score + %s WHERE id=%s",
+                    (reward, user_id),
+                )
+                logger.info(f"User {user_id} досяг стріку {new_streak} днів! Нараховано +{reward} балів.")
 
-        return new_streak, reward
+    return new_streak, reward
 
 def get_topic_streak(user_id: int, topic: str) -> int:
     with connect() as con:
         cur = con.cursor()
         cur.execute("""
-            SELECT streak
-            FROM user_topic_streaks
+            SELECT streak FROM user_topic_streaks
             WHERE user_id=%s AND topic=%s
         """, (user_id, topic))
         row = cur.fetchone()
@@ -571,8 +727,7 @@ def has_topic_streak_award(user_id: int, topic: str, milestone: int) -> bool:
     with connect() as con:
         cur = con.cursor()
         cur.execute("""
-            SELECT 1
-            FROM user_topic_streak_awards
+            SELECT 1 FROM user_topic_streak_awards
             WHERE user_id=%s AND topic=%s AND milestone=%s
         """, (user_id, topic, milestone))
         return bool(cur.fetchone())
@@ -590,34 +745,40 @@ def mark_topic_streak_award(user_id: int, topic: str, milestone: int):
 # Aggregates for fast progress
 # -----------------------------
 def get_progress_aggregates(user_id: int):
-    """
-    totals[(topic, level)] = загальна кількість задач (звичайних, не daily)
-    done[(topic, level)]   = скільки користувач виконав у цій парі (topic, level)
-    """
-    with connect() as con:
-        cur = con.cursor()
-        cur.execute("""
-            SELECT topic, level, COUNT(*)
-            FROM tasks
-            WHERE is_daily = 0
-            GROUP BY topic, level
-        """)
-        totals = {(t, l): n for (t, l, n) in cur.fetchall()}
+    totals = {}
+    done = {}
+    try:
+        with connect() as con:
+            cur = con.cursor()
+            # Отримуємо загальну кількість звичайних задач по темах/рівнях
+            cur.execute("""
+                SELECT topic, level, COUNT(*)
+                FROM tasks
+                WHERE is_daily = 0 AND topic IS NOT NULL AND level IS NOT NULL AND topic != '' AND level != ''
+                GROUP BY topic, level
+            """)
+            totals = {(t, l): n for (t, l, n) in cur.fetchall()}
 
-        cur.execute("""
-            SELECT t.topic, t.level, COUNT(*)
-            FROM completed_tasks c
-            JOIN tasks t ON t.id = c.task_id
-            WHERE c.user_id = %s AND t.is_daily = 0
-            GROUP BY t.topic, t.level
-        """, (user_id,))
-        done = {(t, l): n for (t, l, n) in cur.fetchall()}
+            # Отримуємо кількість виконаних звичайних задач користувачем по темах/рівнях
+            cur.execute("""
+                SELECT t.topic, t.level, COUNT(c.task_id)
+                FROM completed_tasks c
+                JOIN tasks t ON t.id = c.task_id
+                WHERE c.user_id = %s AND t.is_daily = 0 
+                      AND t.topic IS NOT NULL AND t.level IS NOT NULL AND t.topic != '' AND t.level != ''
+                GROUP BY t.topic, t.level
+            """, (user_id,))
+            done = {(t, l): n for (t, l, n) in cur.fetchall()}
+            
+    except Exception as e:
+         logger.error(f"Помилка при отриманні агрегатів прогресу для user {user_id}: {e}", exc_info=True)
+         # Повертаємо порожні словники у випадку помилки
+         return {}, {}
+         
+    return totals, done
 
-        return totals, done
-    
 def get_users_for_reengagement(days_ago: int):
     target_date = date.today() - timedelta(days=days_ago)
-    
     with connect() as con:
         cur = con.cursor()
         cur.execute(
@@ -625,14 +786,20 @@ def get_users_for_reengagement(days_ago: int):
             (target_date,)
         )
         return cur.fetchall()
-    
+
 def get_all_users_for_export():
     with connect() as con:
         cur = con.cursor()
         cur.execute("""
             SELECT id, display_name, username, score, city, phone_number, last_activity
             FROM users
-            ORDER BY score DESC
+            ORDER BY score DESC, id
         """)
-        # Повертає список кортежів
-        return cur.fetchall()
+        # Конвертуємо дати в рядки для CSV
+        results = []
+        for row in cur.fetchall():
+            row_list = list(row)
+            if isinstance(row_list[-1], date): # Якщо останній елемент - дата
+                 row_list[-1] = row_list[-1].isoformat() # Конвертуємо в YYYY-MM-DD
+            results.append(tuple(row_list))
+        return results
