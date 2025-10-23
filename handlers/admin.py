@@ -3,6 +3,7 @@ from telegram.ext import ContextTypes
 import json
 import csv
 import io
+import logging
 
 from handlers.utils import (
     build_admin_menu,
@@ -33,16 +34,15 @@ from db import (
     get_all_users_for_export,
 )
 
-# from handlers.state import feedback_state # <-- ВИДАЛЕНО
-
 TASKS_PER_PAGE = 5
 FEEDBACKS_PER_PAGE = 5
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # user_id = update.effective_user.id # <-- Більше не потрібен тут
     text = update.message.text
 
-    # <-- user_id не передається у функції, вони тепер беруть стан з context
     if await handle_admin_menu(update, context, text):
         return
     if await handle_add_task(update, context, text):
@@ -53,14 +53,12 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
 async def addtask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # user_id = update.effective_user.id # <-- Більше не потрібен тут
     text = "➕ Додати задачу"
-    await handle_admin_menu(update, context, text) # <-- user_id не передається
+    await handle_admin_menu(update, context, text) 
 
 async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
-    user_id = update.effective_user.id # <-- Отримуємо user_id тут, він потрібен для admin_ids
+    user_id = update.effective_user.id 
 
-    # <-- Перевірка стану через context.user_data
     if context.user_data.get('feedback_state') and context.user_data['feedback_state'].get("step") == "pagination":
         if text == "↩️ Назад":
             context.user_data.pop('feedback_state', None) # <-- Видалення стану з context
@@ -72,21 +70,44 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             
     # --- Перегляд звернень користувачів ---
     # <-- Перевірка стану через context.user_data
+# --- Перегляд звернень користувачів ---
     if text == "💬 Звернення користувачів" and context.user_data.get('admin_menu_state'):
-        await context.bot.send_chat_action(chat_id=user_id, action="typing")
-        feedbacks = get_all_feedback()
-        if not feedbacks:
-            await update.message.reply_text("Немає звернень.", reply_markup=build_admin_menu())
+        logger.info(f"Admin {user_id}: Handling 'Звернення користувачів'.") # <-- ЛОГ 1
+        
+        try: # <-- 2. Додаємо try
+            await context.bot.send_chat_action(chat_id=user_id, action="typing")
+            
+            logger.info(f"Admin {user_id}: Calling get_all_feedback...") # <-- ЛОГ 2
+            feedbacks = get_all_feedback()
+            logger.info(f"Admin {user_id}: get_all_feedback returned {len(feedbacks)} items.") # <-- ЛОГ 3
+            
+            if not feedbacks:
+                await update.message.reply_text("Немає звернень.", reply_markup=build_admin_menu())
+                logger.info(f"Admin {user_id}: No feedbacks found, replied.") # <-- ЛОГ 4
+                return True
+                
+            context.user_data['feedback_state'] = {"page": 0, "step": "pagination"}
+            
+            logger.info(f"Admin {user_id}: Generating feedback page message...") # <-- ЛОГ 5
+            msg, total = show_feedback_page_msg(feedbacks, 0)
+            has_prev = False
+            has_next = FEEDBACKS_PER_PAGE < total
+            logger.info(f"Admin {user_id}: Feedback message generated. Sending...") # <-- ЛОГ 6
+            
+            await update.message.reply_text(
+                msg,
+                reply_markup=build_feedback_pagination_inline_keyboard(0, has_prev, has_next)
+            )
+            logger.info(f"Admin {user_id}: Feedback message sent successfully.") # <-- ЛОГ 7
             return True
-        context.user_data['feedback_state'] = {"page": 0, "step": "pagination"} # <-- Збереження стану в context
-        msg, total = show_feedback_page_msg(feedbacks, 0)
-        has_prev = False
-        has_next = FEEDBACKS_PER_PAGE < total
-        await update.message.reply_text(
-            msg,
-            reply_markup=build_feedback_pagination_inline_keyboard(0, has_prev, has_next)
-        )
-        return True
+            
+        except Exception as e: # <-- 3. Ловимо помилку
+            logger.error(f"ПОМИЛКА при обробці 'Звернення користувачів' для admin {user_id}: {e}", exc_info=True)
+            await update.message.reply_text(
+                "❌ Сталася помилка при отриманні звернень. Дивіться логи.",
+                reply_markup=build_admin_menu() # Повертаємо в адмін-меню
+            )
+            return True # Важливо повернути True, щоб інші обробники не спрацювали
     
     
     # Перехід в адмінку
