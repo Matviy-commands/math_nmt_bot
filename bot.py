@@ -14,7 +14,7 @@ from handlers.admin import (
     handle_admin_photo,
 )
 from handlers.task import main_message_handler
-from db import init_db, get_users_for_reengagement
+from db import init_db, get_users_for_reengagement # <-- Імпортуємо get_users_for_reengagement
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
@@ -29,12 +29,11 @@ async def router(update, context):
 async def check_inactive_users(context: ContextTypes.DEFAULT_TYPE):
     print(f"[{datetime.datetime.now()}] Job 'check_inactive_users': Запущено перевірку...")
     
+    # --- Повідомлення через 3 дні ---
     try:
-        # --- 1. ТИМЧАСОВА ЗМІНА ДЛЯ ТЕСТУ ---
-        # Ми шукаємо 5 днів, бо в твоїй базі стоїть '2025-10-18' (23 - 18 = 5)
-        # Поверни на 'days_ago=3' після тесту.
-        inactive_users = get_users_for_reengagement(days_ago=5) 
-        print(f"  > Знайдено {len(inactive_users)} користувачів (неактивні 5 днів - ТЕСТ).")
+        # Шукаємо тих, хто був активний рівно 3 дні тому
+        inactive_users = get_users_for_reengagement(days_ago=3)
+        print(f"  > Знайдено {len(inactive_users)} користувачів (неактивні 3 дні).")
         
         message_text = (
             "👋 Привіт! Помітили, що ти давно не заходив.\n\n"
@@ -48,10 +47,9 @@ async def check_inactive_users(context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=user_id, text=message_text)
                 print(f"    > Надіслано нагадування юзеру {user_id}")
             except Exception as e:
+
                 print(f"    > ПОМИЛКА відправки юзеру {user_id}: {e}")
 
-        
-        # (Цей блок зараз нічого не знайде, бо 7 днів - це інша дата)
         inactive_users_7 = get_users_for_reengagement(days_ago=7)
         print(f"  > Знайдено {len(inactive_users_7)} користувачів (неактивні 7 днів).")
         
@@ -81,27 +79,16 @@ def main():
     
     job_queue = app.job_queue
     
+    run_time = datetime.time(hour=10, minute=0, second=0)
     
-    # --- 2. ТИМЧАСОВІ ЗМІНИ ДЛЯ ТЕСТУ ---
+    job_queue.run_daily(
+        check_inactive_users,
+        time=run_time,
+        name="daily_check_inactive"
+    )
     
-    # run_time = datetime.time(hour=10, minute=0, second=0)
+    print(f"Завдання 'check_inactive_users' заплановано на {run_time} UTC щодня.")
     
-    # --- Коментуємо щоденний запуск ---
-    # job_queue.run_daily(
-    #     check_inactive_users,
-    #     time=run_time,
-    #     name="daily_check_inactive"
-    # )
-    # print(f"Завдання 'check_inactive_users' заплановано на {run_time} UTC щодня.")
-
-    
-    # --- Додаємо запуск через 10 секунд ---
-    print("!!! ТЕСТОВИЙ РЕЖИМ: 'check_inactive_users' запуститься через 10 секунд.")
-    job_queue.run_once(check_inactive_users, when=10)
-    
-    # --- Кінець тестових змін ---
-
-
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(MessageHandler(filters.PHOTO, handle_admin_photo))
     app.add_handler(CallbackQueryHandler(handle_feedback_pagination_callback, pattern="^feedback_"))
