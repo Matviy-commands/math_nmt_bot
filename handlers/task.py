@@ -662,3 +662,41 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     username = update.effective_user.username or ""
     if username:
         update_user(user_id, "username", username)
+
+async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    contact = update.message.contact
+
+    # Перевіряємо, чи ми очікуємо контакт саме на етапі реєстрації
+    if context.user_data.get('registration_state') and context.user_data['registration_state'].get("step") == "phone":
+        state = context.user_data['registration_state']
+        phone = contact.phone_number
+
+        # На всяк випадок додаємо '+', якщо його немає
+        if not phone.startswith('+'):
+            phone = '+' + phone
+
+        # Перевірка (хоча для contact вона зазвичай не потрібна, але хай буде)
+        if not (phone.startswith('+') and len(phone) >= 10 and phone[1:].isdigit()):
+             await update.message.reply_text("Ой, щось не так з номером. Спробуйте ввести вручну у форматі +380...")
+             return # Залишаємо юзера на кроці введення телефону
+
+        # --- Все гаразд, завершуємо реєстрацію ---
+        update_user(user_id, "phone_number", phone)
+        context.user_data.pop('registration_state', None) # Видаляємо стан реєстрації
+
+        await update.message.reply_text(
+            "🎉 <b>Дякуємо за реєстрацію!</b>\n\n"
+            "Ваші дані успішно збережено. Тепер ви можете переглянути своє місце в рейтингу.",
+            parse_mode="HTML"
+            # Клавіатуру тут не надсилаємо, бо show_rating її покаже
+        )
+        # Одразу показуємо рейтинг
+        await show_rating(update, context)
+        return
+    else:
+        # Якщо контакт прийшов несподівано (не під час реєстрації)
+        await update.message.reply_text(
+            "Дякую за контакт, але зараз я його не очікував.",
+            reply_markup=build_main_menu(user_id) # Повертаємо в головне меню
+        )
