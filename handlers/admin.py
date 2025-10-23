@@ -77,6 +77,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     # --- Перегляд звернень користувачів ---
     # <-- Перевірка стану через context.user_data
     if text == "💬 Звернення користувачів" and context.user_data.get('admin_menu_state'):
+        await context.bot.send_chat_action(chat_id=user_id, action="typing")
         feedbacks = get_all_feedback()
         if not feedbacks:
             await update.message.reply_text("Немає звернень.", reply_markup=build_admin_menu())
@@ -122,14 +123,6 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             reply_markup=build_cancel_keyboard()
         )
         return True
-    
-    # if text == "➕ Додати щоденну задачу" and context.user_data.get('admin_menu_state'):
-    #     context.user_data['add_task_state'] = {"step": "category", "is_daily": 1}
-    #     await update.message.reply_text(
-    #         "Оберіть категорію ЩОДЕННОЇ задачі:",
-    #         reply_markup=build_category_keyboard()
-    #     )
-    #     return True
 
 
     if text == "🗑 Видалити задачу" and context.user_data.get('admin_menu_state'):
@@ -186,6 +179,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     if context.user_data.get('admin_menu_state') and isinstance(context.user_data['admin_menu_state'], dict):
         state = context.user_data['admin_menu_state'] # <-- Отримання стану з context
         if state.get("step") == "choose_category" and text in CATEGORIES:
+            await context.bot.send_chat_action(chat_id=user_id, action="typing")
             state["category"] = text
             topics = get_all_topics_by_category(text)
             if not topics:

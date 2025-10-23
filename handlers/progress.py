@@ -14,6 +14,7 @@ from db import (
 
 async def show_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    await context.bot.send_chat_action(chat_id=user_id, action="typing")
     # from handlers.state import user_last_menu # <-- ВИДАЛЕНО
     context.user_data['user_last_menu'] = "progress"
 
@@ -76,6 +77,7 @@ async def show_rating(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # from handlers.state import user_last_menu # <-- ВИДАЛЕНО
+    await context.bot.send_chat_action(chat_id=user_id, action="typing")
     context.user_data['user_last_menu'] = "rating"
 
     top_users = get_top_users(10)
