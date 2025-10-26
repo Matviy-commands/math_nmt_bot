@@ -56,7 +56,7 @@ CORRECT_ANSWER_STICKERS = [
 ]
 
 INCORRECT_ANSWER_STICKERS = [
-    'CAACAgIAAxkBAAE8-mpo_hXmIf2PPbywDPhu44w2aHg1fQACmZAAArt2uEucUWPfzWHQAAE2BA', # Example ID
+    'CAACAgIAAxkBAAE8-qpo_h2pUHpZ_6n71bovF1-47kenYQAC9V8AAupQEUkloO6Sc3Q4bTYE', # Example ID
     # Add more incorrect sticker file_ids here
 ]
 # --------------------
