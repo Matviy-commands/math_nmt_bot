@@ -186,6 +186,8 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"❌ Не знайдено задач для теми '{topic}' рівня '{text}'.", reply_markup=build_main_menu(user_id))
                 context.user_data.pop('start_task_state', None)
                 return
+            
+            is_repeat_session = not uncompleted_tasks
 
             await update.message.reply_text(reply_text, parse_mode=ParseMode.HTML)
 
@@ -196,7 +198,8 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "task_ids": [t["id"] for t in tasks_to_solve],
                 "completed_ids": completed_ids,
                 "current": 0,
-                "total_tasks": len(tasks_to_solve)
+                "total_tasks": len(tasks_to_solve),
+                "is_repeat": is_repeat_session
             }
 
             await send_next_task(update, context, user_id)
@@ -453,17 +456,27 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
                 )
             else: # End of normal task session
-                available_levels = get_available_levels_for_topic(topic, exclude_level=current_level)
-                keyboard = []
-                if available_levels:
-                    keyboard.append([KeyboardButton(lvl) for lvl in available_levels])
-                keyboard.append([KeyboardButton("Змінити тему")])
-                keyboard.append([KeyboardButton("↩️ Меню")])
-                await update.message.reply_text(
-                    f"🎉 Вітаю! Ти завершив(ла) всі завдання рівня «{current_level}» по темі «{topic}».\n"
-                    "Можеш спробувати інший рівень, змінити тему або повернутись у меню.",
-                    reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-                )
+                  available_levels = get_available_levels_for_topic(topic, exclude_level=current_level)
+                  keyboard = []
+                  if available_levels:
+                      keyboard.append([KeyboardButton(lvl) for lvl in available_levels])
+                  keyboard.append([KeyboardButton("Змінити тему")])
+                  keyboard.append([KeyboardButton("↩️ Меню")])
+
+                  # --- ОНОВЛЕНИЙ БЛОК ПОВІДОМЛЕННЯ ---
+                  is_repeat = state.get("is_repeat", False) # Перевіряємо, чи це був повтор
+                  if is_repeat:
+                      final_message = f"👍 Чудово! Ти завершив(ла) <b>повторне проходження</b> рівня «{current_level}» по темі «{topic}»."
+                  else:
+                      final_message = f"🎉 Вітаю! Ти завершив(ла) <b>усі нові завдання</b> рівня «{current_level}» по темі «{topic}»."
+                  final_message += "\nМожеш спробувати інший рівень, змінити тему або повернутись у меню."
+                  # --- КІНЕЦЬ ОНОВЛЕНОГО БЛОКУ ---
+
+                  await update.message.reply_text(
+                      final_message, # <-- Використовуємо нову змінну
+                      reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+                      parse_mode=ParseMode.HTML # Додаємо parse_mode
+                  )
         return # Important to return after handling
 
 # --- Handles "Don't Know" button ---
@@ -536,17 +549,27 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True)
                 )
             else: # End of normal session
-                available_levels = get_available_levels_for_topic(topic, exclude_level=current_level)
-                keyboard = []
-                if available_levels:
-                    keyboard.append([KeyboardButton(lvl) for lvl in available_levels])
-                keyboard.append([KeyboardButton("Змінити тему")])
-                keyboard.append([KeyboardButton("↩️ Меню")])
-                await update.message.reply_text(
-                    f"🏁 Завдання рівня «{current_level}» по темі «{topic}» завершено.\n"
-                    "Обери інший рівень, тему або повернись у меню.",
-                    reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-                )
+                  available_levels = get_available_levels_for_topic(topic, exclude_level=current_level)
+                  keyboard = []
+                  if available_levels:
+                      keyboard.append([KeyboardButton(lvl) for lvl in available_levels])
+                  keyboard.append([KeyboardButton("Змінити тему")])
+                  keyboard.append([KeyboardButton("↩️ Меню")])
+
+                  # --- ОНОВЛЕНИЙ БЛОК ПОВІДОМЛЕННЯ ---
+                  is_repeat = state.get("is_repeat", False) # Перевіряємо, чи це був повтор
+                  if is_repeat:
+                      final_message = f"🏁 Завершено <b>повторне проходження</b> рівня «{current_level}» по темі «{topic}»."
+                  else:
+                      final_message = f"🏁 Завершено <b>усі нові завдання</b> рівня «{current_level}» по темі «{topic}»."
+                  final_message += "\nОбери інший рівень, тему або повернись у меню."
+                  # --- КІНЕЦЬ ОНОВЛЕНОГО БЛОКУ ---
+
+                  await update.message.reply_text(
+                      final_message, # <-- Використовуємо нову змінну
+                      reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+                      parse_mode=ParseMode.HTML # Додаємо parse_mode
+                  )
         return
 
 # --- Main Message Handler (Router for non-admin users) ---
