@@ -1,9 +1,9 @@
 import os
 import datetime
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
-load_dotenv()
+# load_dotenv()
 
 from handlers.start import start_handler
 from handlers.admin import (
