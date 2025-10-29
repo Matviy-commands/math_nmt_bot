@@ -314,7 +314,7 @@ def get_random_task(topic=None, level=None, user_id=None, is_daily=None):
 def add_task(data):
     category = data.get("category")
     # 🔄 ВИПРАВЛЕНО: psycopg2 сам перетворить dict в JSONB, json.dumps не потрібен
-    answer_json_or_dict = data.get("answer", []) 
+    answer_json_string = json.dumps(data.get("answer", [])) 
     with connect() as con:
         con.cursor().execute("""
             INSERT INTO tasks (category, topic, level, task_type, question, answer, explanation, photo, is_daily)
@@ -325,7 +325,7 @@ def add_task(data):
             data.get("level") or "",
             data.get("task_type"),
             data["question"],
-            answer_json_or_dict, # 🔄 ВИПРАВЛЕНО
+            answer_json_string,
             data.get("explanation"), # Додамо get для безпеки
             data.get("photo"),
             data.get("is_daily", False), # 🔄 ВИПРАВЛЕНО: 0 -> False
@@ -410,23 +410,8 @@ def update_task_field(task_id, field, value):
         logger.error(f"Спроба оновити недопустиме поле '{field}' для task {task_id}")
         raise ValueError(f"Недопустиме поле для оновлення задачі: {field}")
         
-    # 🔄 ВИПРАВЛЕНО: Якщо оновлюємо 'answer' і це не JSONB-сумісний dict/list, 
-    # спробуємо застарий варіант з json.dumps
-    if field == 'answer' and not isinstance(value, (dict, list)):
-         try:
-            # Припустимо, що прийшов рядок, який треба перетворити на JSON
-            # Або що прийшов dict/list, який треба передати як JSON
-             value = json.dumps(value) 
-         except TypeError:
-             logger.warning(f"Незвичайний тип для поля 'answer' task {task_id}: {value}. Спроба передати як є.")
-             # Якщо це вже dict/list, psycopg2 впорається
-             if isinstance(value, (dict, list)):
-                pass # Все ок
-             else: # Якщо це рядок, але не JSON, база може видати помилку
-                logger.error(f"Не вдалося конвертувати відповідь у JSON для task {task_id}: {value}")
-                raise ValueError("Некоректний формат відповіді для JSON")
-    
-    # 🔄 ВИПРАВЛЕНО: для is_daily переконуємось, що це boolean
+    if field == 'answer':
+        value = json.dumps(value)
     if field == 'is_daily':
         value = bool(value)
 

@@ -641,7 +641,7 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         task_id = state["task_id"]
         if text != "Пропустити" and text.strip():
             ans_list = [a.strip() for a in text.split(",")]
-            update_task_field(task_id, "answer", json.dumps(ans_list))
+            update_task_field(task_id, "answer", ans_list)
         state["step"] = "edit_explanation"
         task = get_task_by_id(task_id)
         await update.message.reply_text(
