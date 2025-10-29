@@ -259,8 +259,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     # --- Крок 2: Обрано тему — стартуємо пагінацію ---
     if context.user_data.get('admin_menu_state') and isinstance(context.user_data['admin_menu_state'], dict):
         state = context.user_data['admin_menu_state'] # <-- Отримання стану з context
-        # (Виправлено: is_daily=1 якщо step == "choose_topic_daily", інакше 0)
-        is_daily_check = 1 if state.get("step") == "choose_topic_daily" else 0
+        is_daily_check = True if state.get("step") == "choose_topic_daily" else False
         topics = get_all_topics(is_daily=is_daily_check)
         
         if state.get("step") in ["choose_topic", "choose_topic_daily"] and text in topics:
