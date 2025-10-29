@@ -100,6 +100,11 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
 
+    if text == "↩️ Меню":
+        context.user_data.pop('start_task_state', None) # Чистимо стан
+        await update.message.reply_text("📍 Головне меню:", reply_markup=build_main_menu(user_id))
+        return
+
     if 'start_task_state' in context.user_data:
         state = context.user_data['start_task_state']
         category = state.get("category")

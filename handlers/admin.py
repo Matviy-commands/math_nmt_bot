@@ -244,7 +244,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return True    
 
     if text == "📋 Переглянути щоденні задачі" and context.user_data.get('admin_menu_state'):
-        topics = get_all_topics(is_daily=1)
+        topics = get_all_topics(is_daily=True)
         if not topics:
             await update.message.reply_text("У базі ще немає жодної теми.", reply_markup=build_admin_menu())
             return True
@@ -458,7 +458,7 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, te
     
     elif state["step"] == "explanation":
         data["explanation"] = text
-        data["is_daily"] = state.get("is_daily", 0)
+        data["is_daily"] = bool(state.get("is_daily", 0))
         if data["is_daily"] == 1 and "category" not in data:
             data["category"] = "Щоденні"   
         add_task(data)
