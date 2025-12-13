@@ -21,6 +21,9 @@ if not logger.hasHandlers():
 # Connection Pool
 # -----------------------------
 try:
+    # Register psycopg2 extras for handling JSONB automatically
+    psycopg2.extras.register_json()
+    
     db_pool = psycopg2.pool.SimpleConnectionPool(
         minconn=1,
         maxconn=10,
@@ -30,6 +33,12 @@ try:
         host=os.getenv("PG_HOST"),
         port=os.getenv("PG_PORT"),
         sslmode="require",
+        # --- ДОДАНО KEEPALIVES (Щоб AWS не розривав з'єднання) ---
+        keepalives=1,
+        keepalives_idle=30,    # Пінгувати кожні 30 секунд простою
+        keepalives_interval=10, # Інтервал між повторами, якщо немає відповіді
+        keepalives_count=5      # Кількість спроб до розриву
+        # ---------------------------------------------------------
     )
     logger.info("✅ Пул з'єднань з PostgreSQL успішно створено.")
 except Exception as e:
@@ -46,7 +55,7 @@ def connect():
         raise Exception("Пул з'єднань не ініціалізовано!")
 
     con = None
-    retries = 1 # Дозволяємо одну повторну спробу
+    retries = 3 # Дозволяємо одну повторну спробу
 
     while retries >= 0:
         need_retry = False
