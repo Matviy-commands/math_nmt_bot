@@ -91,9 +91,9 @@ def main():
     print(f"Завдання 'check_inactive_users' заплановано на {run_time} UTC щодня.")
     
     app.add_handler(CommandHandler("start", start_handler))
+    app.add_handler(CommandHandler("promote", notify_admin_promotion))
     app.add_handler(MessageHandler(filters.PHOTO, handle_admin_photo))
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
-    app.add_handler(CommandHandler("promote", notify_admin_promotion))
     app.add_handler(CallbackQueryHandler(handle_feedback_pagination_callback, pattern="^feedback_"))
     app.add_handler(CallbackQueryHandler(handle_task_pagination_callback))
     app.add_handler(CommandHandler("addtask", addtask_handler))
