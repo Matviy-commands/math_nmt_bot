@@ -744,3 +744,42 @@ async def handle_admin_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     await update.message.reply_text("Зараз фото не очікується. Спробуйте спочатку вибрати дію в меню.")
+
+from telegram.constants import ParseMode # Переконайся, що це імпортовано
+from handlers.utils import admin_ids
+
+async def notify_admin_promotion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Команда: /promote <user_id>
+    Надсилає користувачу повідомлення про те, що він став адміном.
+    """
+    user_id = update.effective_user.id
+    
+    # 1. Перевірка безпеки: чи є відправник адміном
+    if user_id not in admin_ids:
+        return # Ігноруємо звичайних користувачів
+
+    # 2. Отримуємо ID нового адміна з аргументів команди
+    if not context.args:
+        await update.message.reply_text("⚠️ Вкажіть ID користувача.\nПриклад: <code>/promote 123456789</code>", parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID має бути числом.")
+        return
+
+    # 3. Надсилаємо привітання новому адміну
+    message_text = (
+        "👋 <b>Привіт!</b>\n\n"
+        "🎉 <b>Вітаємо, тебе додали до команди адміністраторів бота!</b> 🔐\n\n"
+        "Тепер тобі доступна панель керування, додавання задач та перегляд статистики.\n\n"
+        "👇 <i>Натисни /start або кнопку «🔐 Адмінка», щоб побачити нові можливості.</i>"
+    )
+
+    try:
+        await context.bot.send_message(chat_id=target_id, text=message_text, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(f"✅ Користувача <code>{target_id}</code> успішно повідомлено!", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Не вдалося надіслати повідомлення (можливо, користувач не заблокував бота):\n{e}")

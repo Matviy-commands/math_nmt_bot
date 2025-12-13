@@ -12,6 +12,7 @@ from handlers.admin import (
     handle_task_pagination_callback,
     handle_feedback_pagination_callback,
     handle_admin_photo,
+    notify_admin_promotion,
 )
 from handlers.task import main_message_handler, handle_contact
 from db import init_db, get_users_for_reengagement 
@@ -92,6 +93,7 @@ def main():
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(MessageHandler(filters.PHOTO, handle_admin_photo))
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
+    app.add_handler(CommandHandler("promote", notify_admin_promotion))
     app.add_handler(CallbackQueryHandler(handle_feedback_pagination_callback, pattern="^feedback_"))
     app.add_handler(CallbackQueryHandler(handle_task_pagination_callback))
     app.add_handler(CommandHandler("addtask", addtask_handler))
