@@ -1,6 +1,6 @@
 from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 
-admin_ids = [1070282751, 981761965, 622895283, 536875267, 799115167, 816846097, 542897073, 1008277167]
+admin_ids = [1070282751, 981761965, 622895283, 536875267, 799115167, 816846097, 542897073, 1008277167, 5215159721]
 CATEGORIES = ["Алгебра", "Геометрія"]
 LEVELS = ["легкий", "середній", "важкий"]
 
