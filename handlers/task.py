@@ -96,6 +96,79 @@ def build_task_options_inline(task: dict):
     return InlineKeyboardMarkup([row])
 
 
+def _normalize_answers_for_task(task: dict, values: list[str]) -> list[str]:
+    normalized = [_normalize_option_key(str(v).strip()) for v in (values or []) if str(v).strip()]
+    options = _extract_abvg_options(task)
+    if not options:
+        return normalized
+
+    key_order = [opt["key"] for opt in options]
+    text_to_keys = {}
+    for opt in options:
+        text_key = opt["text"].strip().lower()
+        text_to_keys.setdefault(text_key, []).append(opt["key"])
+
+    mapped = []
+    for v in normalized:
+        if v in {"А", "Б", "В", "Г"}:
+            mapped.append(v)
+            continue
+        if v.isdigit():
+            idx = int(v) - 1
+            if 0 <= idx < len(key_order):
+                mapped.append(key_order[idx])
+                continue
+        t = v.strip().lower()
+        if t in text_to_keys:
+            mapped.extend(text_to_keys[t])
+            continue
+        mapped.append(v)
+    return mapped
+
+
+def _build_correct_option_keys(task: dict) -> set[str]:
+    options = _extract_abvg_options(task)
+    if not options:
+        return set()
+
+    key_order = [opt["key"] for opt in options]
+    text_to_keys = {}
+    for opt in options:
+        text_key = opt["text"].strip().lower()
+        text_to_keys.setdefault(text_key, []).append(opt["key"])
+
+    raw_answers = task.get("answer", [])
+    if not isinstance(raw_answers, list):
+        raw_answers = [raw_answers]
+
+    keys = set()
+    for raw in raw_answers:
+        v = _normalize_option_key(str(raw).strip())
+        if not v:
+            continue
+        if v in {"А", "Б", "В", "Г"}:
+            keys.add(v)
+            continue
+        if v.isdigit():
+            idx = int(v) - 1
+            if 0 <= idx < len(key_order):
+                keys.add(key_order[idx])
+                continue
+        t = v.strip().lower()
+        if t in text_to_keys:
+            keys.update(text_to_keys[t])
+    return keys
+
+
+def _format_option_by_key(task: dict, key: str) -> str:
+    options = _extract_abvg_options(task)
+    key = _normalize_option_key(key)
+    for opt in options:
+        if opt["key"] == key:
+            return f"{opt['key']}) {opt['text']}"
+    return key
+
+
 # --- Helper Functions (Defined FIRST) ---
 
 async def handle_registration_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -427,13 +500,16 @@ async def handle_task_option_callback(update: Update, context: ContextTypes.DEFA
 
     user_id = update.effective_user.id
     explanation = task.get("explanation", "Пояснення відсутнє.")
-    user_ans = [selected]
-    correct_ans = [_normalize_option_key(str(a).strip()) for a in task.get("answer", [])]
+    user_ans = _normalize_answers_for_task(task, [selected])
+    correct_ans = _normalize_answers_for_task(task, [str(a).strip() for a in task.get("answer", [])])
+    correct_option_keys = _build_correct_option_keys(task)
 
     is_correct = False
     match_correct = 0
     try:
-        if task.get("task_type") == "match":
+        if correct_option_keys:
+            is_correct = selected in correct_option_keys
+        elif task.get("task_type") == "match":
             match_correct = len(set(user_ans) & set(correct_ans))
             is_correct = (match_correct == len(correct_ans) and len(user_ans) == len(correct_ans))
         else:
@@ -453,6 +529,10 @@ async def handle_task_option_callback(update: Update, context: ContextTypes.DEFA
     msg = "✅ <b>Правильно!</b>" if is_correct else "❌ <b>Неправильно.</b>"
     if not is_correct:
         msg += f"\nПравильна: <code>{', '.join(correct_ans)}</code>"
+    msg += f"\nYour choice: <code>{_format_option_by_key(task, selected)}</code>"
+    if not is_correct and correct_option_keys:
+        correct_pretty = ", ".join([_format_option_by_key(task, k) for k in sorted(correct_option_keys)])
+        msg += f"\nCorrect option: <code>{correct_pretty}</code>"
     if delta > 0:
         msg += f"\n💰 +{delta} балів"
     msg += f"\n\n📖 <b>Пояснення:</b>\n{explanation}"

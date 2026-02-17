@@ -68,6 +68,19 @@ def parse_abvg_options(raw_text: str):
         options.append({"key": labels[idx], "text": value})
     return options
 
+def _normalize_option_key(value: str) -> str:
+    raw = (value or "").strip().upper()
+    aliases = {"A": "А", "B": "Б", "V": "В", "G": "Г"}
+    return aliases.get(raw, raw)
+
+def parse_option_answer_keys(raw_text: str):
+    values = [_normalize_option_key(x.strip()) for x in (raw_text or "").split(",") if x.strip()]
+    if not values:
+        return None
+    if any(v not in {"А", "Б", "В", "Г"} for v in values):
+        return None
+    return values
+
 async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
@@ -469,11 +482,27 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, te
             return True
         state["step"] = "answer"
         state["data"] = data
+        if data.get("options"):
+            await update.message.reply_text(
+                "Введи правильну відповідь літерами (наприклад: А) або кілька через кому (А,В):",
+                reply_markup=build_cancel_keyboard()
+            )
+            return True
         await update.message.reply_text("🔷 Введи правильні відповіді через кому (наприклад: 2, -2):", reply_markup=build_cancel_keyboard())
         return True
 
     elif state["step"] == "answer":
-        data["answer"] = [a.strip() for a in text.split(",")]
+        if data.get("options"):
+            ans_keys = parse_option_answer_keys(text)
+            if not ans_keys:
+                await update.message.reply_text(
+                    "Для задач з варіантами введіть лише літери А/Б/В/Г (наприклад: Г або А,В).",
+                    reply_markup=build_cancel_keyboard()
+                )
+                return True
+            data["answer"] = ans_keys
+        else:
+            data["answer"] = [a.strip() for a in text.split(",")]
         state["step"] = "explanation"
         state["data"] = data
         await update.message.reply_text("📘 Введи пояснення до задачі:", reply_markup=build_cancel_keyboard())
@@ -590,13 +619,43 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         task_id = state["task_id"]
         if text != "Пропустити" and text.strip():
             update_task_field(task_id, "question", text.strip())
-        
+
+        state["step"] = "edit_options"
+        task = get_task_by_id(task_id)
+        cur_options = task.get("options") if isinstance(task, dict) else None
+        opts_txt = "\n".join([f"{o.get('key')}|{o.get('text')}" for o in cur_options if isinstance(o, dict)]) if cur_options else "немає"
+        await update.message.reply_text(
+            f"Поточні варіанти:\n{opts_txt}\n\nНадішліть нові варіанти:\nА|...\nБ|...\nВ|...\nГ|...\nАбо 'Пропустити' / 'Очистити варіанти'.",
+            reply_markup=ReplyKeyboardMarkup(
+                [[KeyboardButton("Пропустити"), KeyboardButton("Очистити варіанти")], [KeyboardButton("❌ Скасувати")]],
+                resize_keyboard=True
+            )
+        )
+        return True
+
+    if state.get("step") == "edit_options":
+        task_id = state["task_id"]
+        if text == "Очистити варіанти":
+            update_task_field(task_id, "options", None)
+        elif text != "Пропустити":
+            parsed = parse_abvg_options(text)
+            if not parsed:
+                await update.message.reply_text(
+                    "Невірний формат. Використайте:\nА|...\nБ|...\nВ|...\nГ|...",
+                    reply_markup=ReplyKeyboardMarkup(
+                        [[KeyboardButton("Пропустити"), KeyboardButton("Очистити варіанти")], [KeyboardButton("❌ Скасувати")]],
+                        resize_keyboard=True
+                    )
+                )
+                return True
+            update_task_field(task_id, "options", parsed)
+
         if state.get("is_daily"):
             state["step"] = "edit_answer"
             task = get_task_by_id(task_id)
             ans_str = ', '.join(task['answer']) if isinstance(task['answer'], list) else str(task['answer'])
             await update.message.reply_text(
-                f"Поточна відповідь: {ans_str}\nВведіть нову відповідь через кому або натисніть 'Пропустити':",
+                f"Поточна відповідь: {ans_str}\nВведіть нову відповідь (для варіантів: А/Б/В/Г) або 'Пропустити':",
                 reply_markup=skip_cancel_keyboard()
             )
         else:
@@ -653,9 +712,20 @@ async def handle_edit_task(update: Update, context: ContextTypes.DEFAULT_TYPE, t
     if state.get("step") == "edit_answer":
         task_id = state["task_id"]
         if text != "Пропустити" and text.strip():
-            ans_list = [a.strip() for a in text.split(",")]
-            # update_task_field сама перетворить на JSONB
-            update_task_field(task_id, "answer", ans_list)
+            task = get_task_by_id(task_id)
+            if task and task.get("options"):
+                ans_keys = parse_option_answer_keys(text)
+                if not ans_keys:
+                    await update.message.reply_text(
+                        "Для задач з варіантами введіть лише літери А/Б/В/Г (наприклад: Г або А,В).",
+                        reply_markup=skip_cancel_keyboard()
+                    )
+                    return True
+                update_task_field(task_id, "answer", ans_keys)
+            else:
+                ans_list = [a.strip() for a in text.split(",")]
+                # update_task_field сама перетворить на JSONB
+                update_task_field(task_id, "answer", ans_list)
         state["step"] = "edit_explanation"
         task = get_task_by_id(task_id)
         await update.message.reply_text(
