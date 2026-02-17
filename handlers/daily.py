@@ -1,6 +1,6 @@
 import datetime
 import logging # <-- Додаємо logging
-from telegram import ReplyKeyboardMarkup, KeyboardButton, Update
+from telegram import ReplyKeyboardMarkup, KeyboardButton, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 # Імпорти з db
@@ -10,6 +10,22 @@ from db import get_user_field, update_user, get_random_task
 logger = logging.getLogger(__name__)
 if not logger.hasHandlers():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+
+def _daily_options_inline(task: dict):
+    options = task.get("options")
+    if not isinstance(options, list):
+        return None
+    row = []
+    for item in options:
+        if not isinstance(item, dict):
+            continue
+        key = (item.get("key") or "").strip().upper()
+        if key in {"А", "Б", "В", "Г"}:
+            row.append(InlineKeyboardButton(key, callback_data=f"taskopt:{task.get('id')}:{key}"))
+    if not row:
+        return None
+    return InlineKeyboardMarkup([row])
 
 async def handle_daily_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the '/daily' command or 'Щоденна задача' button."""
@@ -71,6 +87,9 @@ async def handle_daily_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 await update.message.reply_text(task_text, reply_markup=kb, parse_mode="HTML")
+            options_kb = _daily_options_inline(task)
+            if options_kb:
+                await update.message.reply_text("Оберіть варіант відповіді:", reply_markup=options_kb)
             # --- End Sending Task ---
 
         else:

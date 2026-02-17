@@ -128,12 +128,14 @@ def init_db():
                 level TEXT NOT NULL,
                 task_type TEXT,
                 question TEXT NOT NULL,
+                options JSONB,
                 answer JSONB NOT NULL,
                 explanation TEXT,
                 photo TEXT,
                 is_daily BOOLEAN DEFAULT FALSE
             )
         """)
+        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS options JSONB")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS completed_tasks (
                 user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -254,7 +256,7 @@ def get_level_by_score(score):
 # -----------------------------
 _ALLOWED_TASK_FIELDS = {
     "category", "topic", "level", "task_type", "question", 
-    "answer", "explanation", "photo", "is_daily"
+    "options", "answer", "explanation", "photo", "is_daily"
 }
 
 def get_random_task(topic=None, level=None, user_id=None, is_daily=None):
@@ -294,6 +296,7 @@ def add_task(data):
         'level': data.get('level') or "",
         'task_type': data.get('task_type'),
         'question': data.get('question'),
+        "options": extras.Json(data.get("options")) if data.get("options") is not None else None,
         "answer": extras.Json(answer_data),
         'explanation': data.get('explanation'),
         'photo': data.get('photo'),
@@ -307,8 +310,8 @@ def add_task(data):
     with connect() as con:
         cur = con.cursor()
         cur.execute("""
-            INSERT INTO tasks (category, topic, level, task_type, question, answer, explanation, photo, is_daily)
-            VALUES (%(category)s, %(topic)s, %(level)s, %(task_type)s, %(question)s, %(answer)s, %(explanation)s, %(photo)s, %(is_daily)s)
+            INSERT INTO tasks (category, topic, level, task_type, question, options, answer, explanation, photo, is_daily)
+            VALUES (%(category)s, %(topic)s, %(level)s, %(task_type)s, %(question)s, %(options)s, %(answer)s, %(explanation)s, %(photo)s, %(is_daily)s)
         """, params)
 
 def get_all_tasks_by_topic(topic, is_daily=False):
@@ -356,6 +359,8 @@ def update_task_field(task_id, field, value):
         
     if field == 'is_daily':
         value = bool(value)
+    if field == "options" and value is not None:
+        value = extras.Json(value)
     if field == "answer":
         value = extras.Json(value)
 

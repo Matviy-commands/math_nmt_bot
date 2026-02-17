@@ -66,6 +66,36 @@ def build_level_keyboard(levels):
     buttons = [[KeyboardButton(lvl)] for lvl in levels]
     return ReplyKeyboardMarkup(buttons + [[KeyboardButton("↩️ Назад до тем")]], resize_keyboard=True)
 
+# --- Option helpers ---
+def _normalize_option_key(value: str) -> str:
+    raw = (value or "").strip().upper()
+    aliases = {"A": "А", "B": "Б", "V": "В", "G": "Г"}
+    return aliases.get(raw, raw)
+
+
+def _extract_abvg_options(task: dict):
+    options = task.get("options")
+    if not isinstance(options, list):
+        return []
+    cleaned = []
+    for item in options:
+        if not isinstance(item, dict):
+            continue
+        key = _normalize_option_key(item.get("key", ""))
+        text = (item.get("text") or "").strip()
+        if key in {"А", "Б", "В", "Г"} and text:
+            cleaned.append({"key": key, "text": text})
+    return cleaned
+
+
+def build_task_options_inline(task: dict):
+    options = _extract_abvg_options(task)
+    if not options:
+        return None
+    row = [InlineKeyboardButton(opt["key"], callback_data=f"taskopt:{task.get('id')}:{opt['key']}") for opt in options]
+    return InlineKeyboardMarkup([row])
+
+
 # --- Helper Functions (Defined FIRST) ---
 
 async def handle_registration_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -255,14 +285,21 @@ async def send_next_task(update: Update, context: ContextTypes.DEFAULT_TYPE, use
         if s > 0: streak_info = f"🔥 Стрік: {s}"
     if already_done: streak_info = "🔁 Повтор (без балів)"
 
-    txt = f"{header}\n<i>{info}</i>\n\n📝 <b>Завдання:</b>\n{task.get('question')}\n\n<i>{streak_info}</i>"
+    options = _extract_abvg_options(task)
+    options_text = ""
+    if options:
+        options_text = "\n\n<b>Варіанти:</b>\n" + "\n".join([f"{opt['key']}) {opt['text']}" for opt in options])
+    txt = f"{header}\n<i>{info}</i>\n\n📝 <b>Завдання:</b>\n{task.get('question')}{options_text}\n\n<i>{streak_info}</i>"
     kb = build_task_keyboard()
+    options_inline = build_task_options_inline(task)
 
     try:
         if task.get("photo"):
             await update.message.reply_photo(task["photo"], caption=txt, reply_markup=kb, parse_mode=ParseMode.HTML)
         else:
             await update.message.reply_text(txt, reply_markup=kb, parse_mode=ParseMode.HTML)
+        if options_inline:
+            await update.message.reply_text("Оберіть варіант відповіді:", reply_markup=options_inline)
     except Exception:
         await update.message.reply_text("Помилка відправки.", reply_markup=build_main_menu(user_id))
         context.user_data.pop('solving_state', None)
@@ -282,8 +319,8 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     explanation = task.get("explanation", "Пояснення відсутнє.")
-    user_ans = [a.strip() for a in text.replace(';', ',').split(',') if a.strip()]
-    correct_ans = [str(a).strip() for a in task.get("answer", [])]
+    user_ans = [_normalize_option_key(a.strip()) for a in text.replace(';', ',').split(',') if a.strip()]
+    correct_ans = [_normalize_option_key(str(a).strip()) for a in task.get("answer", [])]
     
     is_correct = False
     match_correct = 0
@@ -354,6 +391,119 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
             
             txt = f"👍 Повтор завершено." if is_rep else f"🎉 Рівень «{lvl}» завершено!"
             await update.message.reply_text(txt, reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+
+async def handle_task_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data or ""
+    if not data.startswith("taskopt:"):
+        return
+    if 'solving_state' not in context.user_data:
+        return
+
+    state = context.user_data['solving_state']
+    task = state.get("current_task")
+    if not task:
+        return
+
+    parts = data.split(":", 2)
+    if len(parts) != 3:
+        return
+    try:
+        task_id = int(parts[1])
+    except ValueError:
+        return
+    if task_id != task.get("id"):
+        await query.answer("Це кнопка від іншої задачі.", show_alert=False)
+        return
+
+    selected = _normalize_option_key(parts[2])
+    if selected not in {"А", "Б", "В", "Г"}:
+        return
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    user_id = update.effective_user.id
+    explanation = task.get("explanation", "Пояснення відсутнє.")
+    user_ans = [selected]
+    correct_ans = [_normalize_option_key(str(a).strip()) for a in task.get("answer", [])]
+
+    is_correct = False
+    match_correct = 0
+    try:
+        if task.get("task_type") == "match":
+            match_correct = len(set(user_ans) & set(correct_ans))
+            is_correct = (match_correct == len(correct_ans) and len(user_ans) == len(correct_ans))
+        else:
+            is_correct = (set(user_ans) == set(correct_ans))
+    except Exception:
+        pass
+
+    already = task["id"] in state.get("completed_ids", set())
+    is_daily = state.get("is_daily", False)
+    delta = 0
+
+    if not already:
+        delta = calc_points(task, is_correct=is_correct, match_correct=match_correct)
+        if delta > 0:
+            add_score(user_id, delta)
+
+    msg = "✅ <b>Правильно!</b>" if is_correct else "❌ <b>Неправильно.</b>"
+    if not is_correct:
+        msg += f"\nПравильна: <code>{', '.join(correct_ans)}</code>"
+    if delta > 0:
+        msg += f"\n💰 +{delta} балів"
+    msg += f"\n\n📖 <b>Пояснення:</b>\n{explanation}"
+    await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+    sticker = random.choice(CORRECT_ANSWER_STICKERS if is_correct else INCORRECT_ANSWER_STICKERS)
+    try:
+        await context.bot.send_sticker(user_id, sticker)
+    except Exception:
+        pass
+
+    if mark_task_completed(user_id, task["id"]):
+        state.get("completed_ids", set()).add(task["id"])
+
+    if is_correct and not already and not is_daily:
+        topic = state.get("topic")
+        s = inc_topic_streak(user_id, topic)
+        if s in [5, 10, 15, 20]:
+            add_score(user_id, s)
+            await query.message.reply_text(f"🏅 Стрік {s} у темі «{topic}»! +{s} балів")
+    elif not is_correct and not already and not is_daily:
+        reset_topic_streak(user_id, state.get("topic"))
+
+    s, b = update_streak_and_reward(user_id)
+    if b > 0:
+        await query.message.reply_text(f"🔥 Щоденний стрік: {s}! +{b} балів.")
+
+    state["current"] += 1
+    if state["current"] < state.get("total_tasks"):
+        if is_daily:
+            context.user_data.pop('solving_state', None)
+            await query.message.reply_text("✅ Щоденна задача виконана!", reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True))
+        else:
+            await send_next_task(update, context, user_id)
+    else:
+        topic = state.get("topic")
+        lvl = state.get("level")
+        is_rep = state.get("is_repeat")
+        context.user_data.pop('solving_state', None)
+
+        if is_daily:
+            await query.message.reply_text("🎉 Щоденна задача завершена!", reply_markup=ReplyKeyboardMarkup([[KeyboardButton("↩️ Меню")]], resize_keyboard=True))
+        else:
+            kb = []
+            avl = get_available_levels_for_topic(topic, exclude_level=lvl)
+            if avl:
+                kb.append([KeyboardButton(l) for l in avl])
+            kb.append([KeyboardButton("Змінити тему"), KeyboardButton("↩️ Меню")])
+            txt = "👍 Повтор завершено." if is_rep else f"🎉 Рівень «{lvl}» завершено!"
+            await query.message.reply_text(txt, reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+
 
 async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id

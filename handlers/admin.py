@@ -42,6 +42,32 @@ logger = logging.getLogger(__name__)
 if not logger.hasHandlers():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
+
+def parse_abvg_options(raw_text: str):
+    """
+    Parses options in format:
+    А|text
+    Б|text
+    В|text
+    Г|text
+    """
+    labels = ["А", "Б", "В", "Г"]
+    options = []
+    lines = [ln.strip() for ln in (raw_text or "").splitlines() if ln.strip()]
+    if len(lines) != 4:
+        return None
+
+    for idx, ln in enumerate(lines):
+        if "|" not in ln:
+            return None
+        key, value = [p.strip() for p in ln.split("|", 1)]
+        if key.upper() != labels[idx]:
+            return None
+        if not value:
+            return None
+        options.append({"key": labels[idx], "text": value})
+    return options
+
 async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
@@ -392,6 +418,32 @@ async def handle_add_task(update: Update, context: ContextTypes.DEFAULT_TYPE, te
 
     elif state["step"] == "question":
         data["question"] = text
+        state["step"] = "options"
+        state["data"] = data
+        await update.message.reply_text(
+            "Введіть варіанти відповіді у 4 рядки (А/Б/В/Г) або натисніть 'Пропустити'.\n"
+            "Формат:\n"
+            "А|...\nБ|...\nВ|...\nГ|...",
+            reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Пропустити")], [KeyboardButton("❌ Скасувати")]], resize_keyboard=True)
+        )
+        return True
+
+    elif state["step"] == "options":
+        if text == "Пропустити":
+            data["options"] = None
+        else:
+            parsed = parse_abvg_options(text)
+            if not parsed:
+                await update.message.reply_text(
+                    "Невірний формат. Надішліть 4 рядки у форматі:\nА|...\nБ|...\nВ|...\nГ|...\n"
+                    "Або натисніть 'Пропустити'.",
+                    reply_markup=ReplyKeyboardMarkup(
+                        [[KeyboardButton("Пропустити")], [KeyboardButton("❌ Скасувати")]],
+                        resize_keyboard=True
+                    )
+                )
+                return True
+            data["options"] = parsed
         state["step"] = "photo"
         state["data"] = data
         await update.message.reply_text(

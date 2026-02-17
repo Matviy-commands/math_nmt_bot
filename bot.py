@@ -14,7 +14,7 @@ from handlers.admin import (
     handle_admin_photo,
     notify_admin_promotion,
 )
-from handlers.task import main_message_handler, handle_contact
+from handlers.task import main_message_handler, handle_contact, handle_task_option_callback
 from db import init_db, get_users_for_reengagement 
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -94,8 +94,9 @@ def main():
     app.add_handler(CommandHandler("promote", notify_admin_promotion))
     app.add_handler(MessageHandler(filters.PHOTO, handle_admin_photo))
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
+    app.add_handler(CallbackQueryHandler(handle_task_option_callback, pattern="^taskopt:"))
     app.add_handler(CallbackQueryHandler(handle_feedback_pagination_callback, pattern="^feedback_"))
-    app.add_handler(CallbackQueryHandler(handle_task_pagination_callback))
+    app.add_handler(CallbackQueryHandler(handle_task_pagination_callback, pattern=r"^(prev_|next_|back$|noop$)"))
     app.add_handler(CommandHandler("addtask", addtask_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, router))
     
