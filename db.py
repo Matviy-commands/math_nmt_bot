@@ -12,14 +12,6 @@ if not logger.hasHandlers():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 # --- Кінець налаштування логера ---
 
-# --- Реєстрація JSON/JSONB (вирішує проблему з типами) ---
-try:
-    extras.register_json(globally=True)
-    logger.info("✅ JSONB type handler registered globally.")
-except Exception as e:
-    logger.error(f"Failed to register JSON handler: {e}")
-
-
 # -----------------------------
 # Connection Pool (з налаштуваннями для AWS)
 # -----------------------------
@@ -302,7 +294,7 @@ def add_task(data):
         'level': data.get('level') or "",
         'task_type': data.get('task_type'),
         'question': data.get('question'),
-        'answer': answer_data,
+        "answer": extras.Json(answer_data),
         'explanation': data.get('explanation'),
         'photo': data.get('photo'),
         'is_daily': data.get('is_daily', False)
@@ -364,6 +356,8 @@ def update_task_field(task_id, field, value):
         
     if field == 'is_daily':
         value = bool(value)
+    if field == "answer":
+        value = extras.Json(value)
 
     with connect() as con:
         con.cursor().execute(
