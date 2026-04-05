@@ -22,9 +22,10 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 async def router(update, context):
     text = update.message.text
     if text == "🔐 Адмінка" or context.user_data.get('admin_menu_state'):
-        await admin_message_handler(update, context)
-    else:
-        await main_message_handler(update, context)
+        handled = await admin_message_handler(update, context)
+        if handled:
+            return
+    await main_message_handler(update, context)
 
 
 async def check_inactive_users(context: ContextTypes.DEFAULT_TYPE):

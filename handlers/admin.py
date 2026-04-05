@@ -85,13 +85,14 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     text = update.message.text
 
     if await handle_admin_menu(update, context, text):
-        return
+        return True
     if await handle_add_task(update, context, text):
-        return
+        return True
     if await handle_delete_task(update, context, text):
-        return
+        return True
     if await handle_edit_task(update, context, text):
-        return
+        return True
+    return False
 
 async def addtask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "➕ Додати задачу"
