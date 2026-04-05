@@ -186,7 +186,7 @@ def _build_task_result_message(
 ) -> str:
     msg = "✅ <b>Правильно!</b>" if is_correct else "❌ <b>Неправильно.</b>"
     if user_choice is not None:
-        msg += f"\nВаш вибір: <code>{html_escape(user_choice)}</code>"
+        msg += f"\nВаша відповідь: <code>{html_escape(user_choice)}</code>"
     if not is_correct:
         right = _format_answer_variants(task, correct_values or [])
         msg += f"\nПравильна відповідь: <code>{html_escape(right)}</code>"
@@ -632,9 +632,14 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not task: return
 
-    ans = ', '.join([str(a).strip() for a in task.get("answer", [])])
+    correct_keys = _build_correct_option_keys(task)
+    raw_answers = [str(a).strip() for a in task.get("answer", [])]
+    ans = _format_answer_variants(task, sorted(correct_keys) if correct_keys else raw_answers)
     expl = task.get("explanation", "")
-    await update.message.reply_text(f"🤔 Правильна: <code>{ans}</code>\n\n📖 {expl}", parse_mode=ParseMode.HTML)
+    await update.message.reply_text(
+        f"🤔 Правильна відповідь: <code>{html_escape(ans)}</code>\n\n📖 {html_escape(expl)}",
+        parse_mode=ParseMode.HTML,
+    )
 
     if mark_task_completed(user_id, task["id"]):
         state.get("completed_ids", set()).add(task["id"])
