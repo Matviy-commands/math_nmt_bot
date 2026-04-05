@@ -20,11 +20,9 @@ from db import init_db, get_users_for_reengagement
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 async def router(update, context):
-    text = update.message.text
-    if text == "🔐 Адмінка" or context.user_data.get('admin_menu_state'):
-        handled = await admin_message_handler(update, context)
-        if handled:
-            return
+    handled = await admin_message_handler(update, context)
+    if handled:
+        return
     await main_message_handler(update, context)
 
 

@@ -100,8 +100,9 @@ async def addtask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
     user_id = update.effective_user.id 
+    feedback_state = context.user_data.get('feedback_state')
 
-    if context.user_data.get('feedback_state') and context.user_data['feedback_state'].get("step") == "pagination":
+    if isinstance(feedback_state, dict) and feedback_state.get("step") == "pagination":
         if text == "↩️ Назад":
             context.user_data.pop('feedback_state', None)
             await update.message.reply_text(

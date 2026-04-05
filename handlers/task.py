@@ -658,6 +658,7 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text or ""
+    feedback_state = context.user_data.get('feedback_state')
 
     try:
         update_streak_and_reward(user_id)
@@ -668,7 +669,7 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # State Dispatch
     if 'registration_state' in context.user_data: await handle_registration_step(update, context); return
     if context.user_data.get('change_name_state'): await handle_change_name_step(update, context); return
-    if 'feedback_state' in context.user_data: await handle_feedback_step(update, context); return
+    if feedback_state is True: await handle_feedback_step(update, context); return
     if 'start_task_state' in context.user_data: await handle_task_step(update, context); return
     
     if 'solving_state' in context.user_data:
