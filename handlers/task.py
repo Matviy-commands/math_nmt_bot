@@ -1,5 +1,7 @@
 import random
 import logging
+from html import escape as html_escape
+from typing import Optional
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
@@ -169,6 +171,31 @@ def _format_option_by_key(task: dict, key: str) -> str:
     return key
 
 
+def _format_answer_variants(task: dict, values: list[str]) -> str:
+    pretty = [_format_option_by_key(task, v) for v in (values or [])]
+    return ", ".join(pretty) if pretty else "-"
+
+
+def _build_task_result_message(
+    task: dict,
+    is_correct: bool,
+    explanation: str,
+    delta: int = 0,
+    user_choice: Optional[str] = None,
+    correct_values: Optional[list[str]] = None,
+) -> str:
+    msg = "✅ <b>Правильно!</b>" if is_correct else "❌ <b>Неправильно.</b>"
+    if user_choice is not None:
+        msg += f"\nВаш вибір: <code>{html_escape(user_choice)}</code>"
+    if not is_correct:
+        right = _format_answer_variants(task, correct_values or [])
+        msg += f"\nПравильна відповідь: <code>{html_escape(right)}</code>"
+    if delta > 0:
+        msg += f"\n💰 +{delta} балів"
+    msg += f"\n\n📖 <b>Пояснення:</b>\n{html_escape(explanation or 'Пояснення відсутнє.')}"
+    return msg
+
+
 # --- Helper Functions (Defined FIRST) ---
 
 async def handle_registration_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -255,6 +282,11 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
 
+    if text in ("↩️ Меню", "↩️ Назад") and context.user_data.get('start_task_state', {}).get("step") == "category":
+        context.user_data.pop('start_task_state', None)
+        await update.message.reply_text("📍 Головне меню:", reply_markup=build_main_menu(user_id))
+        return
+
     # 🔥 ВИПРАВЛЕННЯ: Дозволяємо вийти в меню на будь-якому етапі вибору
     if text == "↩️ Меню":
         context.user_data.pop('start_task_state', None)
@@ -285,6 +317,7 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tasks_in_topic = get_all_tasks_by_topic(text)
             available_levels = {t["level"] for t in tasks_in_topic if t.get("level")}
             state["available_levels"] = sorted(list(available_levels))
+            state["topic"] = text
             if not available_levels:
                 await update.message.reply_text("❌ Немає задач у цій темі.", reply_markup=build_topics_keyboard(current_topics + ["↩️ Назад"]))
                 return
@@ -300,7 +333,7 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif state["step"] == "level" and text in LEVELS:
-            topic = get_user_field(user_id, "topic")
+            topic = state.get("topic") or get_user_field(user_id, "topic")
             all_tasks = get_all_tasks_by_topic(topic)
             level_tasks = [t for t in all_tasks if t.get("level") == text]
             if not level_tasks:
@@ -394,6 +427,7 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     explanation = task.get("explanation", "Пояснення відсутнє.")
     user_ans = [_normalize_option_key(a.strip()) for a in text.replace(';', ',').split(',') if a.strip()]
     correct_ans = [_normalize_option_key(str(a).strip()) for a in task.get("answer", [])]
+    correct_option_keys = _build_correct_option_keys(task)
     
     is_correct = False
     match_correct = 0
@@ -413,10 +447,16 @@ async def handle_task_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         delta = calc_points(task, is_correct=is_correct, match_correct=match_correct)
         if delta > 0: add_score(user_id, delta)
 
-    msg = "✅ <b>Правильно!</b>" if is_correct else "❌ <b>Неправильно.</b>"
-    if not is_correct: msg += f"\nПравильна: <code>{', '.join(correct_ans)}</code>"
-    if delta > 0: msg += f"\n💰 +{delta} балів"
-    msg += f"\n\n📖 <b>Пояснення:</b>\n{explanation}"
+    user_pretty = _format_answer_variants(task, user_ans)
+    correct_for_message = sorted(correct_option_keys) if correct_option_keys else correct_ans
+    msg = _build_task_result_message(
+        task=task,
+        is_correct=is_correct,
+        explanation=explanation,
+        delta=delta,
+        user_choice=user_pretty,
+        correct_values=correct_for_message,
+    )
     
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
     
@@ -526,16 +566,15 @@ async def handle_task_option_callback(update: Update, context: ContextTypes.DEFA
         if delta > 0:
             add_score(user_id, delta)
 
-    msg = "✅ <b>Правильно!</b>" if is_correct else "❌ <b>Неправильно.</b>"
-    if not is_correct:
-        msg += f"\nПравильна: <code>{', '.join(correct_ans)}</code>"
-    msg += f"\nYour choice: <code>{_format_option_by_key(task, selected)}</code>"
-    if not is_correct and correct_option_keys:
-        correct_pretty = ", ".join([_format_option_by_key(task, k) for k in sorted(correct_option_keys)])
-        msg += f"\nCorrect option: <code>{correct_pretty}</code>"
-    if delta > 0:
-        msg += f"\n💰 +{delta} балів"
-    msg += f"\n\n📖 <b>Пояснення:</b>\n{explanation}"
+    correct_for_message = sorted(correct_option_keys) if correct_option_keys else correct_ans
+    msg = _build_task_result_message(
+        task=task,
+        is_correct=is_correct,
+        explanation=explanation,
+        delta=delta,
+        user_choice=_format_option_by_key(task, selected),
+        correct_values=correct_for_message,
+    )
     await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
     sticker = random.choice(CORRECT_ANSWER_STICKERS if is_correct else INCORRECT_ANSWER_STICKERS)
