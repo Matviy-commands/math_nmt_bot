@@ -207,6 +207,11 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         if context.user_data['admin_menu_state'] == True:
             # Користувач у корені адмін-меню — повертаємо в головне меню
             context.user_data.pop('admin_menu_state', None)
+            context.user_data.pop('add_task_state', None)
+            context.user_data.pop('delete_task_state', None)
+            context.user_data.pop('edit_task_state', None)
+            if isinstance(context.user_data.get('feedback_state'), dict):
+                context.user_data.pop('feedback_state', None)
             context.user_data.pop('start_task_state', None)
             await update.message.reply_text(
                 "Ви повернулись у головне меню.",

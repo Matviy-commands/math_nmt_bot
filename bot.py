@@ -20,6 +20,23 @@ from db import init_db, get_users_for_reengagement
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 async def router(update, context):
+    text = update.message.text or ""
+    main_menu_buttons = {
+        "🧠 Почати задачу",
+        "📚 Матеріали",
+        "📊 Мій прогрес",
+        "🔁 Щоденна задача",
+        "❓ Допомога / Зв’язок",
+    }
+
+    if text in main_menu_buttons:
+        context.user_data.pop('admin_menu_state', None)
+        context.user_data.pop('add_task_state', None)
+        context.user_data.pop('delete_task_state', None)
+        context.user_data.pop('edit_task_state', None)
+        if isinstance(context.user_data.get('feedback_state'), dict):
+            context.user_data.pop('feedback_state', None)
+
     handled = await admin_message_handler(update, context)
     if handled:
         return
