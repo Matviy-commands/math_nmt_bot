@@ -659,12 +659,24 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     text = update.message.text or ""
     feedback_state = context.user_data.get('feedback_state')
+    global_menu_buttons = {
+        "🧠 Почати задачу",
+        "📚 Матеріали",
+        "📊 Мій прогрес",
+        "🔁 Щоденна задача",
+        "❓ Допомога / Зв’язок",
+        "🔐 Адмінка",
+    }
 
     try:
         update_streak_and_reward(user_id)
         if update.effective_user.username:
             update_user(user_id, "username", update.effective_user.username)
     except: pass
+
+    # Recover gracefully if a stale task-picker state survives after returning to main menu.
+    if 'start_task_state' in context.user_data and text in global_menu_buttons:
+        context.user_data.pop('start_task_state', None)
 
     # State Dispatch
     if 'registration_state' in context.user_data: await handle_registration_step(update, context); return
