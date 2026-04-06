@@ -21,11 +21,21 @@ from handlers.utils import (
     LEVELS,
     MAIN_MENU_BUTTONS,
     canonical_button_text,
+    BTN_START_TASK,
+    BTN_MATERIALS,
+    BTN_PROGRESS,
+    BTN_DAILY,
+    BTN_HELP,
     BTN_CANCEL,
     BTN_MENU,
     BTN_BACK,
     BTN_BACK_TO_TOPICS,
     BTN_DONT_KNOW,
+    BTN_CHANGE_TOPIC,
+    BTN_BADGES,
+    BTN_RATING,
+    BTN_CONTACT_DEV,
+    BTN_CHANGE_RATING_NAME,
 )
 
 # --- Database Imports ---
@@ -700,27 +710,32 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Button Dispatch
     handlers = {
-        "🧠 Почати задачу": task_entrypoint,
-        "🔁 Щоденна задача": handle_daily_task,
-        "📊 Мій прогрес": show_progress,
-        "🛒 Бонуси / Бейджі": show_badges,
-        "🏆 Рейтинг": show_rating,
-        "Змінити тему": task_entrypoint,
-        "↩️ Меню": lambda u, c: u.message.reply_text("📍 Головне меню:", reply_markup=build_main_menu(user_id)),
-        "↩️ Назад": lambda u, c: show_progress(u, c) if c.user_data.get('user_last_menu') in ("badges", "rating") else u.message.reply_text("📍 Головне меню:", reply_markup=build_main_menu(user_id))
+        BTN_START_TASK: task_entrypoint,
+        BTN_DAILY: handle_daily_task,
+        BTN_PROGRESS: show_progress,
+        BTN_BADGES: show_badges,
+        BTN_RATING: show_rating,
+        BTN_CHANGE_TOPIC: task_entrypoint,
+        BTN_MENU: lambda u, c: u.message.reply_text("📍 Головне меню:", reply_markup=build_main_menu(user_id)),
+        BTN_BACK: lambda u, c: show_progress(u, c) if c.user_data.get('user_last_menu') in ("badges", "rating") else u.message.reply_text("📍 Головне меню:", reply_markup=build_main_menu(user_id))
     }
 
     if text in handlers:
+        logger.info("main_message_handler dispatching canonical=%r", text)
         await handlers[text](update, context)
-    elif text == "❓ Допомога / Зв’язок":
-        await update.message.reply_text(HELP_TEXT, reply_markup=ReplyKeyboardMarkup([[KeyboardButton("💬 Написати розробнику")], [KeyboardButton("↩️ Назад")]], resize_keyboard=True), parse_mode=ParseMode.HTML)
-    elif text == "💬 Написати розробнику":
+    elif text == BTN_HELP:
+        logger.info("main_message_handler opening help")
+        await update.message.reply_text(HELP_TEXT, reply_markup=ReplyKeyboardMarkup([[KeyboardButton(BTN_CONTACT_DEV)], [KeyboardButton(BTN_BACK)]], resize_keyboard=True), parse_mode=ParseMode.HTML)
+    elif text == BTN_CONTACT_DEV:
+        logger.info("main_message_handler opening feedback form")
         context.user_data['feedback_state'] = True
-        await update.message.reply_text("✉️ Напишіть ваше звернення:", reply_markup=ReplyKeyboardMarkup([[KeyboardButton("❌ Скасувати")]], resize_keyboard=True))
-    elif text == "✏️ Змінити імʼя в рейтингу":
+        await update.message.reply_text("✉️ Напишіть ваше звернення:", reply_markup=ReplyKeyboardMarkup([[KeyboardButton(BTN_CANCEL)]], resize_keyboard=True))
+    elif text == BTN_CHANGE_RATING_NAME:
+        logger.info("main_message_handler opening rename form")
         context.user_data['change_name_state'] = True
-        await update.message.reply_text("Введіть нове імʼя:", reply_markup=ReplyKeyboardMarkup([[KeyboardButton("❌ Скасувати")]], resize_keyboard=True))
-    elif text == "📚 Матеріали":
+        await update.message.reply_text("Введіть нове імʼя:", reply_markup=ReplyKeyboardMarkup([[KeyboardButton(BTN_CANCEL)]], resize_keyboard=True))
+    elif text == BTN_MATERIALS:
+        logger.info("main_message_handler opening materials")
         btns = [[InlineKeyboardButton(m.get("title","Link"), url=m.get("url", "#"))] for m in MATERIALS]
         await update.message.reply_text("Матеріали:", reply_markup=InlineKeyboardMarkup(btns))
     elif text in LEVELS:
@@ -733,5 +748,5 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         active_states = ['registration_state', 'change_name_state', 'feedback_state', 'start_task_state', 'solving_state']
         if not any(state in context.user_data for state in active_states):
-            logger.info(f"User {user_id}: Unknown command: '{text}'")
+            logger.info("main_message_handler unknown raw_text=%r canonical=%r", raw_text, text)
             await update.message.reply_text("Не зрозумів 🤔. Скористайтесь кнопками.", reply_markup=build_main_menu(user_id))

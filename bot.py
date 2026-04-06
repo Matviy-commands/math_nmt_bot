@@ -1,5 +1,6 @@
 import os
 import datetime
+import logging
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 # from dotenv import load_dotenv
 
@@ -19,9 +20,12 @@ from db import init_db, get_users_for_reengagement
 from handlers.utils import MAIN_MENU_BUTTONS, canonical_button_text
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
+logger = logging.getLogger(__name__)
 
 async def router(update, context):
-    text = canonical_button_text(update.message.text or "")
+    raw_text = update.message.text or ""
+    text = canonical_button_text(raw_text)
+    logger.info("router raw_text=%r canonical=%r user_id=%s", raw_text, text, getattr(update.effective_user, "id", None))
     if text in MAIN_MENU_BUTTONS:
         context.user_data.pop('admin_menu_state', None)
         context.user_data.pop('add_task_state', None)
@@ -32,7 +36,9 @@ async def router(update, context):
 
     handled = await admin_message_handler(update, context)
     if handled:
+        logger.info("router handled by admin_message_handler canonical=%r", text)
         return
+    logger.info("router forwarding to main_message_handler canonical=%r", text)
     await main_message_handler(update, context)
 
 
