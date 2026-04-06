@@ -15,6 +15,7 @@ from handlers.scoring import calc_points
 from handlers.utils import (
     build_main_menu,
     build_category_keyboard,
+    build_task_category_keyboard,
     build_back_to_menu_keyboard,
     build_topics_keyboard,
     CATEGORIES,
@@ -293,7 +294,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Task Logic ---
 
 async def task_entrypoint(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📁 Оберіть категорію (Алгебра чи Геометрія):", reply_markup=build_category_keyboard())
+    await update.message.reply_text("📁 Оберіть категорію (Алгебра чи Геометрія):", reply_markup=build_task_category_keyboard())
     context.user_data['start_task_state'] = {"step": "category"}
 
 async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -327,7 +328,7 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if state["step"] == "topic" and text == BTN_BACK:
             state["step"] = "category"
-            await update.message.reply_text("📁 Оберіть категорію:", reply_markup=build_category_keyboard())
+            await update.message.reply_text("📁 Оберіть категорію:", reply_markup=build_task_category_keyboard())
             return
 
         current_topics = get_all_topics_by_category(category) if category else get_all_topics()

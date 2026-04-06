@@ -165,6 +165,11 @@ def build_category_keyboard():
     rows = _grid(CATEGORIES, cols=2, extra_rows=[[BTN_BACK]])
     return _reply(rows, placeholder="Оберіть категорію…")
 
+def build_task_category_keyboard():
+    """Builds keyboard for selecting a task category with explicit main-menu exit."""
+    rows = _grid(CATEGORIES, cols=2, extra_rows=[[BTN_MENU]])
+    return _reply(rows, placeholder="Оберіть категорію…")
+
 def build_back_to_menu_keyboard():
     """Builds a simple keyboard with a 'Menu' button."""
     return _reply([[KeyboardButton(BTN_MENU)]])
