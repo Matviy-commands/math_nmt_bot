@@ -19,6 +19,13 @@ from handlers.utils import (
     build_topics_keyboard,
     CATEGORIES,
     LEVELS,
+    MAIN_MENU_BUTTONS,
+    canonical_button_text,
+    BTN_CANCEL,
+    BTN_MENU,
+    BTN_BACK,
+    BTN_BACK_TO_TOPICS,
+    BTN_DONT_KNOW,
 )
 
 # --- Database Imports ---
@@ -201,9 +208,10 @@ def _build_task_result_message(
 async def handle_registration_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
+    btn_text = canonical_button_text(text)
     state = context.user_data['registration_state']
 
-    if text == "❌ Скасувати":
+    if btn_text == BTN_CANCEL:
         context.user_data.pop('registration_state', None)
         await update.message.reply_text("Реєстрацію скасовано.", reply_markup=build_main_menu(user_id))
         return
@@ -237,7 +245,7 @@ async def handle_registration_step(update: Update, context: ContextTypes.DEFAULT
 async def handle_change_name_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
-    if text == "❌ Скасувати":
+    if canonical_button_text(text) == BTN_CANCEL:
         context.user_data.pop('change_name_state', None)
         await update.message.reply_text("Скасовано.", reply_markup=build_main_menu(user_id))
         return
@@ -252,7 +260,7 @@ async def handle_change_name_step(update: Update, context: ContextTypes.DEFAULT_
 async def handle_feedback_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
-    if text == "❌ Скасувати":
+    if canonical_button_text(text) == BTN_CANCEL:
         context.user_data.pop('feedback_state', None)
         await update.message.reply_text("Скасовано.", reply_markup=build_main_menu(user_id))
         return
@@ -280,15 +288,15 @@ async def task_entrypoint(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text
+    text = canonical_button_text(update.message.text)
 
-    if text in ("↩️ Меню", "↩️ Назад") and context.user_data.get('start_task_state', {}).get("step") == "category":
+    if text in (BTN_MENU, BTN_BACK) and context.user_data.get('start_task_state', {}).get("step") == "category":
         context.user_data.pop('start_task_state', None)
         await update.message.reply_text("📍 Головне меню:", reply_markup=build_main_menu(user_id))
         return
 
     # 🔥 ВИПРАВЛЕННЯ: Дозволяємо вийти в меню на будь-якому етапі вибору
-    if text == "↩️ Меню":
+    if text == BTN_MENU:
         context.user_data.pop('start_task_state', None)
         await update.message.reply_text("📍 Головне меню:", reply_markup=build_main_menu(user_id))
         return
@@ -304,10 +312,10 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"📂 У категорії '{text}' поки що немає тем.", reply_markup=build_back_to_menu_keyboard())
                 return
             state["step"] = "topic"
-            await update.message.reply_text(f"📖 Оберіть тему:", reply_markup=build_topics_keyboard(topics + ["↩️ Назад"]))
+            await update.message.reply_text(f"📖 Оберіть тему:", reply_markup=build_topics_keyboard(topics + [BTN_BACK]))
             return
 
-        if state["step"] == "topic" and text == "↩️ Назад":
+        if state["step"] == "topic" and text == BTN_BACK:
             state["step"] = "category"
             await update.message.reply_text("📁 Оберіть категорію:", reply_markup=build_category_keyboard())
             return
@@ -319,17 +327,17 @@ async def handle_task_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
             state["available_levels"] = sorted(list(available_levels))
             state["topic"] = text
             if not available_levels:
-                await update.message.reply_text("❌ Немає задач у цій темі.", reply_markup=build_topics_keyboard(current_topics + ["↩️ Назад"]))
+                await update.message.reply_text("❌ Немає задач у цій темі.", reply_markup=build_topics_keyboard(current_topics + [BTN_BACK]))
                 return
             update_user(user_id, "topic", text)
             state["step"] = "level"
             await update.message.reply_text(f"✅ Тема <b>{text}</b>! Оберіть рівень:", reply_markup=build_level_keyboard(state["available_levels"]), parse_mode=ParseMode.HTML)
             return
 
-        if state["step"] == "level" and text == "↩️ Назад до тем":
+        if state["step"] == "level" and text == BTN_BACK_TO_TOPICS:
             state["step"] = "topic"
             topics = get_all_topics_by_category(category) if category else get_all_topics()
-            await update.message.reply_text("📖 Оберіть тему:", reply_markup=build_topics_keyboard(topics + ["↩️ Назад"]))
+            await update.message.reply_text("📖 Оберіть тему:", reply_markup=build_topics_keyboard(topics + [BTN_BACK]))
             return
 
         elif state["step"] == "level" and text in LEVELS:
@@ -662,16 +670,9 @@ async def handle_dont_know(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Main Handler (Router) ---
 async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text or ""
+    raw_text = update.message.text or ""
+    text = canonical_button_text(raw_text)
     feedback_state = context.user_data.get('feedback_state')
-    global_menu_buttons = {
-        "🧠 Почати задачу",
-        "📚 Матеріали",
-        "📊 Мій прогрес",
-        "🔁 Щоденна задача",
-        "❓ Допомога / Зв’язок",
-        "🔐 Адмінка",
-    }
 
     try:
         update_streak_and_reward(user_id)
@@ -680,7 +681,7 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     except: pass
 
     # Recover gracefully if a stale task-picker state survives after returning to main menu.
-    if 'start_task_state' in context.user_data and text in global_menu_buttons:
+    if 'start_task_state' in context.user_data and text in MAIN_MENU_BUTTONS:
         context.user_data.pop('start_task_state', None)
 
     # State Dispatch
@@ -690,8 +691,8 @@ async def main_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if 'start_task_state' in context.user_data: await handle_task_step(update, context); return
     
     if 'solving_state' in context.user_data:
-        if text == "❓ Не знаю": await handle_dont_know(update, context)
-        elif text == "↩️ Меню": 
+        if text == BTN_DONT_KNOW: await handle_dont_know(update, context)
+        elif text == BTN_MENU: 
              context.user_data.pop('solving_state', None)
              await update.message.reply_text("📍 Головне меню:", reply_markup=build_main_menu(user_id))
         else: await handle_task_answer(update, context)

@@ -1,4 +1,71 @@
+import unicodedata
 from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+
+BTN_START_TASK = "🧠 Почати задачу"
+BTN_MATERIALS = "📚 Матеріали"
+BTN_PROGRESS = "📊 Мій прогрес"
+BTN_DAILY = "🔁 Щоденна задача"
+BTN_HELP = "❓ Допомога / Зв’язок"
+BTN_ADMIN = "🔐 Адмінка"
+BTN_MENU = "↩️ Меню"
+BTN_BACK = "↩️ Назад"
+BTN_BACK_TO_TOPICS = "↩️ Назад до тем"
+BTN_DONT_KNOW = "❓ Не знаю"
+BTN_CHANGE_TOPIC = "Змінити тему"
+BTN_BADGES = "🛒 Бонуси / Бейджі"
+BTN_RATING = "🏆 Рейтинг"
+BTN_CONTACT_DEV = "💬 Написати розробнику"
+BTN_CANCEL = "❌ Скасувати"
+BTN_CHANGE_RATING_NAME = "✏️ Змінити імʼя в рейтингу"
+
+MAIN_MENU_BUTTONS = {
+    BTN_START_TASK,
+    BTN_MATERIALS,
+    BTN_PROGRESS,
+    BTN_DAILY,
+    BTN_HELP,
+    BTN_ADMIN,
+}
+
+
+def canonical_button_text(text: str) -> str:
+    raw = unicodedata.normalize("NFKC", text or "").casefold().strip()
+    simple = "".join(ch if ch.isalnum() or ch.isspace() or ch in "/’'" else " " for ch in raw)
+    simple = " ".join(simple.replace("`", " ").split())
+
+    if "почати задачу" in simple:
+        return BTN_START_TASK
+    if "матеріали" in simple:
+        return BTN_MATERIALS
+    if "мій прогрес" in simple:
+        return BTN_PROGRESS
+    if "щоденна задача" in simple:
+        return BTN_DAILY
+    if "допомога" in simple and "зв" in simple:
+        return BTN_HELP
+    if "адмінка" in simple:
+        return BTN_ADMIN
+    if "назад до тем" in simple:
+        return BTN_BACK_TO_TOPICS
+    if simple == "назад":
+        return BTN_BACK
+    if simple == "меню":
+        return BTN_MENU
+    if "не знаю" in simple:
+        return BTN_DONT_KNOW
+    if "змінити тему" in simple:
+        return BTN_CHANGE_TOPIC
+    if "бонуси" in simple or "бейдж" in simple:
+        return BTN_BADGES
+    if simple == "рейтинг" or simple.endswith(" рейтинг"):
+        return BTN_RATING
+    if "написати розробнику" in simple:
+        return BTN_CONTACT_DEV
+    if "скасувати" in simple:
+        return BTN_CANCEL
+    if "змінити" in simple and "ім" in simple and "рейтинг" in simple:
+        return BTN_CHANGE_RATING_NAME
+    return text or ""
 
 admin_ids = [1070282751, 981761965, 622895283, 536875267, 799115167, 816846097, 542897073, 1008277167, 5215159721]
 CATEGORIES = ["Алгебра", "Геометрія"]
@@ -35,19 +102,19 @@ def _reply(rows, placeholder=None, one_time=False):
 
 def build_type_keyboard():
     """Builds keyboard for selecting task type."""
-    rows = _grid(list(TYPE_BUTTONS.keys()), cols=2, extra_rows=[["❌ Скасувати"]])
+    rows = _grid(list(TYPE_BUTTONS.keys()), cols=2, extra_rows=[[BTN_CANCEL]])
     return _reply(rows, placeholder="Оберіть тип задачі…")
 
 def build_main_menu(user_id):
     """Builds the main menu keyboard, showing admin button if applicable."""
-    row_big = [KeyboardButton("🧠 Почати задачу")]
+    row_big = [KeyboardButton(BTN_START_TASK)]
     grid_rows = _grid(
-        ["📚 Матеріали", "📊 Мій прогрес", "🔁 Щоденна задача", "❓ Допомога / Зв’язок"],
+        [BTN_MATERIALS, BTN_PROGRESS, BTN_DAILY, BTN_HELP],
         cols=2
     )
     rows = [row_big] + grid_rows
     if user_id in admin_ids:
-        rows += _grid(["🔐 Адмінка"], cols=1)
+        rows += _grid([BTN_ADMIN], cols=1)
     return _reply(rows, placeholder="Виберіть дію з меню…")
 
 def build_admin_menu():
@@ -63,11 +130,11 @@ def build_admin_menu():
 
 def build_cancel_keyboard():
     """Builds a simple cancel keyboard."""
-    return _reply([[KeyboardButton("❌ Скасувати")]], one_time=True)
+    return _reply([[KeyboardButton(BTN_CANCEL)]], one_time=True)
 
 def skip_cancel_keyboard():
     """Builds a keyboard with Skip and Cancel options."""
-    rows = _grid(["Пропустити", "❌ Скасувати"], cols=2)
+    rows = _grid(["Пропустити", BTN_CANCEL], cols=2)
     return _reply(rows, one_time=True)
 
 def build_tasks_pagination_keyboard(page, *_):
@@ -78,7 +145,7 @@ def build_tasks_pagination_keyboard(page, *_):
 def build_topics_keyboard(topics):
     """Builds keyboard for selecting a topic."""
     # Ensure "Назад" is always the last button if present
-    has_back = topics and topics[-1] == "↩️ Назад"
+    has_back = topics and topics[-1] == BTN_BACK
     if has_back:
         topics_core = topics[:-1]
     else:
@@ -89,18 +156,18 @@ def build_topics_keyboard(topics):
     
     rows = _grid(topics_core, cols=2)
     if has_back:
-        rows.append([KeyboardButton("↩️ Назад")])
+        rows.append([KeyboardButton(BTN_BACK)])
         
     return _reply(rows, placeholder="Оберіть тему…")
 
 def build_category_keyboard():
     """Builds keyboard for selecting a category."""
-    rows = _grid(CATEGORIES, cols=2, extra_rows=[["↩️ Назад"]])
+    rows = _grid(CATEGORIES, cols=2, extra_rows=[[BTN_BACK]])
     return _reply(rows, placeholder="Оберіть категорію…")
 
 def build_back_to_menu_keyboard():
     """Builds a simple keyboard with a 'Menu' button."""
-    return _reply([[KeyboardButton("↩️ Меню")]])
+    return _reply([[KeyboardButton(BTN_MENU)]])
 
 # ---------- inline paginations ----------
 

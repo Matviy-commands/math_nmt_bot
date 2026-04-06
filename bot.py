@@ -16,20 +16,13 @@ from handlers.admin import (
 )
 from handlers.task import main_message_handler, handle_contact, handle_task_option_callback
 from db import init_db, get_users_for_reengagement 
+from handlers.utils import MAIN_MENU_BUTTONS, canonical_button_text
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 async def router(update, context):
-    text = update.message.text or ""
-    main_menu_buttons = {
-        "🧠 Почати задачу",
-        "📚 Матеріали",
-        "📊 Мій прогрес",
-        "🔁 Щоденна задача",
-        "❓ Допомога / Зв’язок",
-    }
-
-    if text in main_menu_buttons:
+    text = canonical_button_text(update.message.text or "")
+    if text in MAIN_MENU_BUTTONS:
         context.user_data.pop('admin_menu_state', None)
         context.user_data.pop('add_task_state', None)
         context.user_data.pop('delete_task_state', None)
